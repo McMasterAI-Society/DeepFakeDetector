@@ -1,0 +1,154 @@
+# Temp gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.conda/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# PyTorch
+*.pth
+*.pt
+*.ckpt
+
+# TensorFlow
+*.pb
+*.h5
+saved_model/
+checkpoints/
+
+# Machine Learning / AI
+models/
+*.pkl
+*.joblib
+*.model
+*.weights
+logs/
+tensorboard_logs/
+wandb/
+mlruns/
+
+# Datasets and Data Files
+data/
+dataset/
+datasets/
+*.csv
+*.json
+*.parquet
+*.h5
+*.hdf5
+*.npy
+*.npz
+images/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.webp
+
+# Node.js (for Next.js frontend)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Next.js
+.next/
+out/
+.vercel
+.env*.local
+
+# Package managers
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# FastAPI specific
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# Research and experiments
+experiments/
+results/
+outputs/
+artifacts/
+
+# GPU/CUDA
+*.cu
+*.cuh
