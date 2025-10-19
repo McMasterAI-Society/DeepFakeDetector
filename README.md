@@ -36,6 +36,7 @@ To create a reliable, interpretable, and accessible AI system that:
 | **Krish Bhagirath** | Research & Modeling |
 | **Oriana Rueckert** | Data Engineer |
 | **Vihaan Singhal** | Data & Deployment Engineer |
+| **Andrew Wu** | Web Interface and Hosting |
 
 ---
 
