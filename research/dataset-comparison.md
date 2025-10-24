@@ -1,0 +1,8 @@
+# Dataset Research Summary
+
+| **Name** | **Size** | **Real : AI-Generated** | **AI Generators Represented** | **Availability** | **Licensing** |
+|-----------|-----------|--------------------------|--------------------------------|------------------|---------------|
+| **[DRAGON (May 2025)](https://arxiv.org/pdf/2505.11257)** | 2.5 million training images, 100,000 test images (consolidated from CiFAKE, Diffusion Forensics, Synthbuster, and GenImage datasets) | 1,331,167 : 2,600,000 | 25 distinct diffusion models including Stable Diffusion 2.1/1.5/XL Turbo and Flash Stable Diffusion | [Hugging Face – DRAGON Dataset](https://huggingface.co/datasets/lesc-unifi/dragon#dataset-details) | Creative Commons Attribution Share Alike 4.0 International |
+| **[OPENFAKE (Sept 2025)](https://arxiv.org/html/2509.09495v1#S4)** | 4M+ images | 3,000,000 : 963,000 | Stable Diffusion 1.5/2.1/XL/3.5, Flux 1.0-dev/1.1-Pro/Schnell, Midjourney v6/v7, DALL·E 3, Imagen 3/4, GPT Image 1, Ideogram 3.0, Grok-2, HiDream-I1, Recraft v3, Chroma, and 10 community variants of Stable Diffusion 1.5/XL and Flux-Dev | [Hugging Face – OpenFake Dataset](https://huggingface.co/datasets/ComplexDataLab/OpenFake#out-of-scope-use) | CC BY-SA 4.0. Subsets produced with proprietary generators are released under non-commercial terms (“non-complete” clauses). |
+| **[SuSy (2024)](https://arxiv.org/abs/2409.14128)** | 330,000+ total images | 18,000+ AI-generated | DALL·E, Midjourney, Stable Diffusion | [Hugging Face – SuSy Dataset](https://huggingface.co/datasets/HPAI-BSC/SuSy-Dataset) | Multiple licenses (see individual dataset details) |
+
