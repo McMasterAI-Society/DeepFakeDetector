@@ -22,5 +22,8 @@ assignees: ''
 ## Description
 <!-- Provide a clear and concise description of the issue -->
 
+## Deliverable
+<!-- Describe the expected outcome and acceptance criteria -->
+
 ## Additional Context
 <!-- Add any other context, screenshots, error logs, or model performance metrics -->
