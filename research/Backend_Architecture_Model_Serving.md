@@ -282,7 +282,7 @@ This means that each worker handles concurrent requests using FastAPI's async mo
 In front of the application containers, a reverse proxy (like NGINX or Azure Application Gateway) distributes traffic across multiple replicas and handles connection pooling, retries, and rate limiting.
 
 #### b. Kubernetes Level (Cluster)
-In Kubernetes, load balancing happens automatically via **Services** and **Ingress** automatically perform round-robin load balancing across pods. Combine this with:
+In Kubernetes, load balancinh happens automatically via **Services** and **Ingress** automatically perform round-robin load balancing across pods. Combine this with:
 - **Kubernetes Service**: Performs round-robin load balancing across pods in deployment. Each pod runs one instance of the FastAPI container.
 - **Horizontal Pod Autoscaler (HPA):** scales the number of pods based on CPU/GPU/memory and queue length metrics.
 - **Cluster Autoscaler:** scales nodes when GPU or CPU capacity is insufficient.
@@ -338,7 +338,7 @@ Use load balancing for high-volume inference services by deploying multiple infe
 ### High-level approach
 - FastAPI acts as the gateway for pre/postprocessing, caching and auth. 
 - The inference code is run inside the container (Torchscript)
-- One model replica per GPU (or one container/GPU) for straightforward GPU resource control
+- One model replica per GPU (or one container /GPU) for straightforward GPU resource control
 - Use a lightweight model image (no dev tools) for runtime; build heavy tools in a multi-stage build
 ### Image & build best practices
 - **Multi-stage Docker build**: build and compile dependencies in one stage, copy only runtime artifacts into a **slim** runtime image
