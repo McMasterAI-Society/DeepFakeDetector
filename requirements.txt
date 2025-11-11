@@ -5,3 +5,6 @@ pillow
 matplotlib
 scikit-learn
 jupyter
+datasets
+tqdm
+modelscope
