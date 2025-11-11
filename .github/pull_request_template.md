@@ -30,3 +30,8 @@ Closes #issue_number
 
 ### Additional Comments
 <!-- Any notes about the code changes, follow-up issues, or special considerations -->
+
+## Checklist
+- [ ] The branch has been rebased with the latest `development` branch
+- [ ] This PR has the project manager assigned as a reviewer
+- [ ] This PR has myself assigned as the assignee
