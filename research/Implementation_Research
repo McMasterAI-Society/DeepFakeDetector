@@ -1,0 +1,177 @@
+# Current Implementations
+
+## Why we're doing this:
+
+Building a web tool where users upload an image and get back:
+- A probability score that it's AI-generated
+- A visual explanation (heatmap or highlighted patch) showing what triggered the detection
+
+Key requirements:
+- Must generalize to new generators we haven't trained on (this is the hard part)
+- Fast enough for interactive web UX (Next.js + FastAPI stack)
+- Transparent enough that users actually trust the output
+
+This doc surveys what's available: open repos, commercial products, implementation approaches, and what we can realistically adopt.
+
+## Datasets:
+
+**GenImage:** Large-scale dataset with both GAN-generated and diffusion-generated images. The key feature is diversity. Multiple generator architectures, which lets us do proper "train on some generators, test on completely different ones" splits. This is exactly what we need to test cross-generator generalization.
+
+- Site: https://genimage-dataset.github.io/
+- Repo: https://github.com/GenImage-Dataset/GenImage
+
+**Forensics-Bench:** Broader evaluation suite covering various image manipulation and forgery tasks. Useful for stress-testing once we have a baseline working, but overkill for initial development.
+
+- Site: https://forensics-bench.github.io/
+
+(FaceForensics++ and DFDC exist for face/video deepfakes, but we're focused on general images first)
+
+## Implementation approaches:
+
+### Diffusion reconstruction (DIRE / DistilDIRE)
+
+**Core idea:** Use a pre-trained diffusion model to try reconstructing the input image. AI-generated images, especially those made by diffusion models reconstruct with very high fidelity because they already fit the model's learned distribution. Real photos with camera sensor noise, lens artifacts, and natural scene complexity reconstruct less accurately. The reconstruction error becomes our detection signal.
+
+**Why it works:** Diffusion models learn the manifold of "images they can generate." Synthetic images live on that manifold; real photos often don't. We're essentially asking "does this image look like something my diffusion model would make?"
+
+**Practical use:** Strong against unseen diffusion models and surprisingly robust to JPEG compression and blur (because the diffusion model sees through those artifacts). The downside is runtime. Running a full diffusion reconstruction is 10-50x slower than a single forward pass through a CNN or ViT. Makes sense as a secondary verification step for borderline cases rather than the primary detector.
+
+**Links:**
+- Paper overview: https://huggingface.co/papers/2406.00856
+- Implementation: https://github.com/ZhendongWang6/DIRE
+
+### Feature-probe on strong backbones (UnivFD approach)
+
+**Core idea:** Take a powerful pre-trained vision model (ViT, CLIP, DINOv2) that already understands general visual features, freeze the backbone, and train just a small classification head to separate real from AI-generated images. The backbone's features capture things like global structure, texture statistics, and semantic consistency that differ systematically between camera photos and synthetic images.
+
+**Why it works:** Strong vision backbones trained on massive datasets have learned representations that generalize well. Real photos and AI images occupy different regions of this feature space. Real photos have camera noise patterns, lens distortions, natural lighting, scene coherence. AI images have generator-specific artifacts, unnatural texture regularities, and sometimes semantic inconsistencies. A lightweight classifier can learn to exploit these differences.
+
+**Practical use:** Fast inference (single forward pass), generalizes better than training CNNs from scratch, and you get interpretability almost for free via attention maps or feature similarity to training examples. The main work is choosing the right backbone and properly calibrating the output probabilities so "90% AI" actually means ~90% likelihood.
+
+**Links:**
+- Paper: https://arxiv.org/abs/2303.09306
+- Code: https://github.com/WisconsinAIVision/UniversalFakeDetect
+
+This approach looks particularly good for our use case. It is fast, explainable, and proven cross-generator performance.
+
+### Patch-based artifact detection (SSP / ESSP)
+
+**Core idea:** Focus on low-texture regions like sky, walls, or smooth surfaces. Real cameras leave subtle noise patterns everywhere, even in boring regions, sensor read noise, shot noise, slight color variations. Generative models often produce unnaturally smooth or patterned outputs in these simple areas because they're optimizing for perceptual quality. By examining just a few carefully chosen patches, we can often spot fakes.
+
+**Why it works:** It exploits a fundamental difference. Cameras are physical sensors with noise characteristics, while generators are neural networks trying to maximize likelihood or perceptual metrics. Generators waste their capacity on visually interesting regions and skimp on boring ones. SSP (Simple Patch Selection) finds these telltale patches. ESSP (Enhanced SSP) adds preprocessing to make patch features more robust to degradation.
+
+**Practical use:** We're only processing small patches. We can literally show the user "this 64×64 patch of sky is what flagged your image." Great for building user trust. The catch is that plain SSP degrades under heavy JPEG compression or blur. ESSP mitigates this somewhat but adds complexity.
+
+**Links:**
+- Paper: https://arxiv.org/abs/2403.01700
+- Code: https://github.com/bcmi/SSP-AI-Generated-Image-Detection
+
+Worth implementing even if just for the explanation UI. Users really respond to seeing the specific region that triggered detection.
+
+### Frequency-aware CNNs
+
+**Core idea:** In addition to RGB pixel values, feed the network frequency-domain representations (FFT or DCT magnitude/phase). Many generative models leave characteristic fingerprints in frequency space that are invisible or subtle in pixel space. For instance, GANs often show repetitive patterns in high-frequency components, and diffusion models can have specific spectral signatures from the denoising process.
+
+**Why it works:** JPEG compression, blur, and resizing all operate primarily in the frequency domain. By analyzing images in both spatial and frequency representations, you get features that are inherently more robust to these degradations. Also, some generator artifacts are simply more obvious in frequency space. They have periodic patterns, unusual high-frequency energy distributions, etc.
+
+**Practical use:** Adds robustness to social media degradation without much latency cost (FFT is fast). Works well as a complement to spatial methods. The engineering challenge is deciding how to compute the frequency features (full image? patches? which frequencies?) and how to fuse them with spatial features (early concatenation? late fusion?).
+
+**Links:**
+- Overview/survey: https://github.com/strongtwo/Awesome-AIGC-Image-Detection
+- Various implementations: https://github.com/topics/frequency-domain-cnn
+
+Good candidate for a secondary signal to fuse with UnivFD.
+
+### Supervised CNN baselines (CNNSpot, Xception, etc.)
+
+**Core idea:** Train a standard image classification CNN end-to-end on real vs. AI labels. No fancy tricks, just supervised learning with data augmentation.
+
+**Why it works (sometimes):** With enough diverse training data and strong augmentation, CNNs can learn discriminative features. Provides a solid baseline to measure other approaches against.
+
+**Practical use:** Easy to implement and debug. The fundamental problem is overfitting to the training set generators, performance can drop significantly on new generators or even new versions of seen generators. Cross-generator generalization requires careful regularization, extensive augmentation, and diverse training data. Still useful as a baseline and for ensemble approaches.
+
+**Links:**
+- Paper: https://openaccess.thecvf.com/content_CVPR_2020/papers/Wang_CNN-Generated_Images_Are_Easy_to_Spot
+- Code: https://github.com/PeterWang512/CNNDetection
+
+### Forensic fingerprint methods (Noiseprint, TruFor)
+
+**Core idea:** Estimate the camera's noise fingerprint or Photo Response Non-Uniformity (PRNU) pattern and check if it's consistent across the image. Real photos from the same camera have consistent noise patterns. Manipulated or generated images either lack these patterns or have inconsistent ones.
+
+**Why it works:** Every camera sensor has unique manufacturing imperfections that leave a reproducible fingerprint in photos. It's like a serial number embedded in the noise. Generative models don't produce these patterns, and localized manipulations disrupt them.
+
+**Practical use:** Excellent for localization. We can create pixel-level maps of "authentic vs. manipulated" regions. Not a complete solution for AIGC detection on its own (because it's camera-fingerprint-based), but valuable as an auxiliary signal, especially for explaining *where* in an image something looks wrong. Can improve both detection accuracy and user-facing explanations.
+
+**Links:**
+- Noiseprint: https://grip-unina.github.io/noiseprint/
+- TruFor: https://github.com/grip-unina/TruFor
+
+## Hosted APIs (for rapid prototyping)
+
+If we need something working immediately for user testing or as a benchmark:
+
+**Reality Defender API:** https://www.realitydefender.com/platform/api  
+Black-box ensemble approach. Has a free developer tier. Very fast to integrate but completely opaque. We don't know what models or features they're using. Also unclear how it behaves on out-of-distribution generators.
+
+**Hive API:** https://docs.thehive.ai/docs/ai-image-and-video-detection  
+Similar commercial offering. Well-documented, supports images and video. Same opacity problem.
+
+**C2PA / Content Credentials:** https://contentcredentials.org/  
+Not a detector, rather it's a provenance standard. Images can embed cryptographically signed metadata about their capture and editing history. Only works when creators voluntarily add these signatures. Complementary to detection rather than a substitute.
+
+## Evaluation metrics
+
+**AUC / Average Precision:** Standard metrics for measuring separation between classes across all decision thresholds.
+
+**FPR@95%TPR (False Positive Rate at 95% True Positive Rate):** "If we want to catch 95% of all fake images, what percentage of real images do we wrongly accuse?" This is the metric that matters for user experience.
+
+**Cross-generator generalization:** The critical test. Train on images from generators A, B, C. Test on generators D, E, F that the model has never seen. This simulates the real-world scenario where new generators constantly emerge.
+
+**Robustness benchmarks:** Test accuracy after:
+  - JPEG compression at quality 30, 50, 70
+  - Gaussian blur with σ = 1.0, 2.0
+  - Resizing to various resolutions
+
+**Calibration (ECE - Expected Calibration Error):** Does a predicted probability match reality? If the model says "90% likely AI-generated" for 100 images, roughly 90 of them should actually be AI-generated. Calibration is essential for user trust.
+
+**Latency:** Per-image inference time with batch size 1 (simulating real interactive use). Target: feels instantaneous in web UI (≤ 150ms on modest GPU).
+
+We'll measure all of these on GenImage with three test configurations:
+1. Same-generator (standard held-out test set)
+2. Cross-generator (entire generator families held out)
+3. Degraded (cross-generator + compression/blur/resize)
+
+## Comparison matrix
+
+| Approach | Open source? | Inference speed | Cross-gen performance | Robustness to compression | Explainability | Best use case |
+|----------|--------------|-----------------|----------------------|--------------------------|----------------|---------------|
+| UnivFD (feature-probe) | Yes | Fast | Strong | Good | Attention maps, feature similarity | Primary detector |
+| SSP/ESSP (patch-based) | SSP: Yes, ESSP: Partial | Very fast | Moderate-Good | SSP: Weak, ESSP: Better | Excellent (show exact patch) | Explanation UI, fast triage |
+| Frequency CNN | Yes (various) | Fast-Medium | Good | Excellent | Moderate (frequency heatmaps) | Robustness enhancement |
+| DIRE (diffusion recon) | Yes | Slow | Very strong | Excellent | Moderate (reconstruction diff) | High-confidence verification |
+| Plain CNN baseline | Yes | Fast | Weak-Moderate | Fair | Basic (saliency maps) | Baseline comparison |
+| Commercial APIs | No | Depends on API | Unknown | Unknown | None | Quick prototyping only |
+
+
+## Quick reference links
+
+**Datasets:**
+- GenImage: https://genimage-dataset.github.io/ | https://github.com/GenImage-Dataset/GenImage
+- Forensics-Bench: https://forensics-bench.github.io/
+
+**Key implementations:**
+- UnivFD: https://arxiv.org/abs/2303.09306 | https://github.com/WisconsinAIVision/UniversalFakeDetect
+- DIRE: https://github.com/ZhendongWang6/DIRE | https://huggingface.co/papers/2406.00856
+- SSP: https://arxiv.org/abs/2403.01700 | https://github.com/bcmi/SSP-AI-Generated-Image-Detection
+- CNNDetection: https://github.com/PeterWang512/CNNDetection
+- TruFor: https://github.com/grip-unina/TruFor
+- Noiseprint: https://grip-unina.github.io/noiseprint/
+
+**Frequency-domain resources:**
+- Survey: https://github.com/strongtwo/Awesome-AIGC-Image-Detection
+- Implementations: https://github.com/topics/frequency-domain-cnn
+
+**Commercial APIs (for comparison):**
+- Reality Defender: https://www.realitydefender.com/platform/api
+- Hive: https://docs.thehive.ai/docs/ai-image-and-video-detection
+- C2PA: https://contentcredentials.org/
