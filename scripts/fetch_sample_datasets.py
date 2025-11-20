@@ -5,7 +5,8 @@ from modelscope.msdatasets import MsDataset
 
 
 def download_split_openfake(split_name, base_dir, max_images=None):
-    print(f"\n Downloading OpenFake '{split_name}' split images")
+    """Download and save the OpenFake dataset split into real/fake subfolders."""
+    print(f"\n Downloading sample of OpenFake '{split_name}' split ({max_images} images)...")
     dataset = load_dataset("ComplexDataLab/OpenFake", split=split_name, streaming=True)
 
     # Output folders
@@ -14,23 +15,25 @@ def download_split_openfake(split_name, base_dir, max_images=None):
     os.makedirs(real_dir, exist_ok=True)
     os.makedirs(fake_dir, exist_ok=True)
 
+    # Iterate through examples
     for i, sample in enumerate(tqdm(dataset, desc=f"Processing {split_name} split")):
-
         if max_images is not None and i >= max_images:
             print(f"Reached max number of images, stopping.")
             break
 
         image = sample["image"]
-        label = sample["label"]  # label = 'real' or 'fake'
+        label = sample["label"]  # label = ('real', 'fake')
 
-        # Convert RGBA to RGB to avoid JPEG errors TODO - does this impact the images?
-        if image.mode == "RGBA":
+
+        # Convert RGBA to RGB to avoid JPEG errors
+        if image.mode != "RGB":
             image = image.convert("RGB")
 
-        # Choose path based on real or fake
+        # Pick destination path
         subdir = real_dir if label == "real" else fake_dir
         image_path = os.path.join(subdir, f"{split_name}_{i:07d}.jpg")
 
+        # Save image
         image.save(image_path)
 
     print(f"Finished {split_name} split: saved to {os.path.join(base_dir, split_name)}")
@@ -70,7 +73,9 @@ def import_openfake(max_train=None, max_test=None):
 
 def download_split_wildfake(split_name, base_dir, max_images=None):
     print(f"\n Downloading Wildfake '{split_name}' split images")
-    dataset = MsDataset.load('hy2628982280/WildFake', subset_name='default', split=split_name)
+
+    dataset = load_dataset("xingjunm/WildDeepfake", split=split_name, streaming=True)
+
 
     # Output folders
     real_dir = os.path.join(base_dir, split_name, "real")
@@ -78,23 +83,36 @@ def download_split_wildfake(split_name, base_dir, max_images=None):
     os.makedirs(real_dir, exist_ok=True)
     os.makedirs(fake_dir, exist_ok=True)
 
+    # Iterate through examples
     for i, sample in enumerate(tqdm(dataset, desc=f"Processing {split_name} split")):
         if max_images is not None and i >= max_images:
             print(f"Reached max number of images, stopping.")
             break
 
-        image = sample["image"]
-        label = sample["IsFake"]  # 0 = real, 1 = fake (based on dataset card)
+        image = sample.get("image")
+        if image is None:
+            # Some HF datasets use 'jpg' or 'png' instead of 'image'
+            image = sample.get("jpg") or sample.get("png")
 
+
+        label = sample.get("label")
+    
+        if label is None and "__key__" in sample:
+            label = 1 if "fake" in sample["__key__"].lower() else 0
+
+        if label is None:
+            print(f"Skipping sample {i}: Missing label")
+            continue
 
         # Convert RGBA to RGB to avoid JPEG errors
-        if image.mode == "RGBA":
+        if image.mode != "RGB":
             image = image.convert("RGB")
 
-        # Choose path based on real or fake
+        # Pick destination path
         subdir = real_dir if label == 0 else fake_dir
         image_path = os.path.join(subdir, f"{split_name}_{i:07d}.jpg")
 
+        # Save image
         image.save(image_path)
 
     print(f"Finished {split_name} split: saved to {os.path.join(base_dir, split_name)}")
@@ -139,9 +157,9 @@ def download_split_dragon(dataset_split, split_name, out_dir, max_images=None):
             print(f"Reached max number of images, stopping.")
             break
 
-        # Images are stored under png
+        # Images are stored under 'png'
         image = sample["png"]
-        if image.mode == "RGBA":
+        if image.mode != "RGB":
             image = image.convert("RGB")
 
         filename = f"{split_name}_{i:07d}.jpg"
@@ -166,9 +184,8 @@ def import_dragon(size="ExtraLarge", max_train=None, max_test=None):
             test/
     """
     base_dir = 'datasets/DRAGON'
-    size_split = size  
-
-    print(f"Downloading DRAGON ({size_split}) subset")
+    size_split = size         
+    print(f"Downloading DRAGON ({size_split}) subset...")
     ds = load_dataset("lesc-unifi/dragon", size_split)
 
     # Create output directories
@@ -177,10 +194,13 @@ def import_dragon(size="ExtraLarge", max_train=None, max_test=None):
     os.makedirs(train_dir, exist_ok=True)
     os.makedirs(test_dir, exist_ok=True)
 
-    download_split_dragon(ds["train"], "train", train_dir, max_images=max_train)
-    download_split_dragon(ds["test"], "test", test_dir, max_images=max_test)
+    # Process available splits
+    if "train" in ds:
+        download_split_dragon(ds["train"], "train", train_dir, max_images=max_train)
+    if "test" in ds:
+        download_split_dragon(ds["test"], "test", test_dir, max_images=max_test)
 
-    print(f"Done. DRAGON ({size_split}) saved in {os.path.abspath(base_dir)}")
+    print(f"DRAGON ({size_split}) saved to: {os.path.abspath(base_dir)}")
 
 
 def main():
@@ -191,18 +211,21 @@ def main():
     import_wildfake(max_train=500, max_test=100)
     import_dragon(size="Large", max_train=300, max_test=50)
 
-    """
+    
     # Default - download entire dataset:
     import_openfake()
     import_wildfake()
     import_dragon()
+    """
+
+    import_openfake(max_train=100, max_test=50)
+    import_wildfake(max_train=100, max_test=50)
+    import_dragon(size="ExtraSmall", max_train=100, max_test=50)
 
     return 0
 
 
+
+
 if __name__ == "__main__":
     main()
-
-
-
-
