@@ -5,6 +5,6 @@ pillow
 matplotlib
 scikit-learn
 jupyter
-datasets
+datasets==3.6.0
 tqdm
-modelscope
+modelscope==1.28.0
