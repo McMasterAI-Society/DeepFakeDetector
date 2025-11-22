@@ -218,9 +218,9 @@ def main():
     import_dragon()
     """
 
-    import_openfake(max_train=100, max_test=50)
+    #import_openfake(max_train=100, max_test=50)
     import_wildfake(max_train=100, max_test=50)
-    import_dragon(size="ExtraSmall", max_train=100, max_test=50)
+    #import_dragon(size="ExtraSmall", max_train=100, max_test=50)
 
     return 0
 
