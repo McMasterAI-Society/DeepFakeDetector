@@ -300,6 +300,10 @@ def main() -> int:
         import_wildfake(max_mb_train=300, max_mb_test=60)
         import_dragon(size="Small", max_mb_train=300, max_mb_test=60)
 
+    #import_openfake(max_train=100, max_test=50)
+    import_wildfake(max_train=100, max_test=50)
+    #import_dragon(size="ExtraSmall", max_train=100, max_test=50)
+
     Default below downloads entire splits. Consider capping for your first run.
     """
     # --- pick one style (count cap or MiB cap) or leave None for full ---
