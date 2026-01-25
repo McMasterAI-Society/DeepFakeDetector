@@ -12,7 +12,7 @@
 `python scripts/fetch_sample_datasets.py --dragon --dragon-size ExtraSmall --max-train 30 --max-test 10`
 `python scripts/fetch_sample_datasets.py --dragon --dragon-size ExtraSmall --cap-train-mb 80 --cap-test-mb 20`
 
-# Verify
+## Verify
 `find datasets/DRAGON -type f -name "*.jpg" | head`
 `find datasets/DRAGON -type f -name "*.jpg" | wc -l`
 ``du -sh datasets/DRAGON`
