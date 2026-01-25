@@ -9,3 +9,7 @@ jupyter
 datasets==3.6.0
 tqdm
 modelscope==1.28.0
+huggingface_hub==0.23.5
+pandas==2.2.3
+pyarrow==17.0.0
+requests>=2.31.0
