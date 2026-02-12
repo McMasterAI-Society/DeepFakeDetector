@@ -1,6 +1,8 @@
 """
 Purpose: This script pulls the dataset from Hugging Face and reconstructs a local, training-ready view of the dataset.
 
+NOTE: Before running, run the command `huggingface-cli login` in your terminal and provide a token with read access to the organization to download the dataset.
+
 Script Responsibilities:
 - download dataset from HUgging Face
 - parse dir structure:
@@ -18,8 +20,8 @@ Script Responsibilities:
 import os
 from huggingface_hub import snapshot_download
 
-
-def load_manual_dataset(local_dir="data/manual_gen_images"):
+  
+def load_manual_dataset(local_dir="datasets/manual_gen_images"):
     repo_id = "DeepFakeDetector/manual-gen-images"
 
     print("Downloading dataset")
