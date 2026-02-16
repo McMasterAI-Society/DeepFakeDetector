@@ -51,7 +51,7 @@ saved_model/
 checkpoints/
 
 # Machine Learning / AI
-models/
+/models/
 *.pkl
 *.joblib
 *.model
@@ -62,24 +62,9 @@ wandb/
 mlruns/
 
 # Datasets and Data Files
-data/
-dataset/
 datasets/
-*.csv
-*.json
-*.parquet
-*.h5
-*.hdf5
 *.npy
 *.npz
-images/
-*.jpg
-*.jpeg
-*.png
-*.gif
-*.bmp
-*.tiff
-*.webp
 
 # Node.js (for Next.js frontend)
 node_modules/
@@ -152,3 +137,12 @@ artifacts/
 # GPU/CUDA
 *.cu
 *.cuh
+# Hugging Face cache
+.hf_cache/
+*/.hf_cache/
+
+# Backend test images
+backend/testimages/
+
+# uvicorn/gunicorn
+*.pid
