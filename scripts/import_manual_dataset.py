@@ -36,6 +36,8 @@ def load_manual_dataset(local_dir="datasets/manual_gen_images"):
     prompts_dir = os.path.join(dataset_path, "prompts")
     images_dir = os.path.join(dataset_path, "images")
 
+    VALID_EXTENSIONS = (".png", ".jpg")
+
     for generator in os.listdir(images_dir):
         generator_path = os.path.join(images_dir, generator)
 
@@ -43,10 +45,10 @@ def load_manual_dataset(local_dir="datasets/manual_gen_images"):
             continue
 
         for filename in os.listdir(generator_path):
-            if not filename.endswith(".png"):
+            if not filename.lower().endswith(VALID_EXTENSIONS):
                 continue
 
-            prompt_id = filename.replace(".png", "")
+            prompt_id = os.path.splitext(filename)[0]
             image_path = os.path.join(generator_path, filename)
             prompt_path = os.path.join(prompts_dir, f"{prompt_id}.txt")
 
