@@ -1,6 +1,4 @@
 # DeepFake Detector API - Docker Image
-# Milestone 1: Hugging Face hosted dummy models
-
 FROM python:3.11-slim
 
 # Set working directory
