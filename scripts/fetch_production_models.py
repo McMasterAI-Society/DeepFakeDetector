@@ -44,7 +44,7 @@ PRODUCTION_SUBMODELS = [
 FUSION_MODEL = "DeepFakeDetector/fusion-majority-test"
 
 # Default cache directory (relative to repo root)
-DEFAULT_CACHE_DIR = Path(__file__).parent.parent / "backend" / ".hf_cache"
+DEFAULT_CACHE_DIR = Path(__file__).parent.parent / "models" / ".hf_cache"
 
 
 def download_repo(repo_id: str, cache_dir: Path, force: bool = False) -> str:
