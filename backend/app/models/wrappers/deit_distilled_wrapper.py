@@ -3,11 +3,12 @@ Wrapper for DeiT Distilled submodel.
 """
 
 import json
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image
 from torchvision import transforms
 
@@ -20,6 +21,7 @@ except ImportError:
 from app.core.errors import InferenceError, ConfigurationError
 from app.core.logging import get_logger
 from app.models.wrappers.base_wrapper import BaseSubmodelWrapper
+from app.services.explainability import attention_rollout, heatmap_to_base64
 
 logger = get_logger(__name__)
 
@@ -135,25 +137,109 @@ class DeiTDistilledWrapper(BaseSubmodelWrapper):
                 details={"repo_id": self.repo_id, "error": str(e)}
             )
     
-    def _run_inference(self, image_tensor: torch.Tensor) -> Dict[str, Any]:
+    def _run_inference(
+        self,
+        image_tensor: torch.Tensor,
+        explain: bool = False
+    ) -> Dict[str, Any]:
         """Run model inference on preprocessed tensor."""
-        with torch.no_grad():
-            # In eval mode, DeiT returns single tensor
-            logits = self._model(image_tensor)
-            probs = F.softmax(logits, dim=1)
-            prob_fake = probs[0, 1].item()  # Index 1 is "fake"
-            pred_int = 1 if prob_fake >= self._threshold else 0
+        heatmap = None
+        
+        if explain:
+            # Collect attention weights from all blocks
+            attentions: List[torch.Tensor] = []
+            handles = []
             
-        return {
+            # Hook into attention modules to capture weights
+            # DeiT blocks structure: blocks[i].attn
+            def create_attn_hook():
+                stored_attn = []
+                
+                def hook(module, inputs, outputs):
+                    # Get q, k from the module's forward computation
+                    # inputs[0] is x of shape [B, N, C]
+                    x = inputs[0]
+                    B, N, C = x.shape
+                    
+                    # Access the attention module's parameters
+                    qkv = module.qkv(x)  # [B, N, 3*dim]
+                    qkv = qkv.reshape(B, N, 3, module.num_heads, C // module.num_heads)
+                    qkv = qkv.permute(2, 0, 3, 1, 4)  # [3, B, heads, N, dim_head]
+                    q, k, v = qkv[0], qkv[1], qkv[2]
+                    
+                    # Compute attention weights
+                    scale = (C // module.num_heads) ** -0.5
+                    attn = (q @ k.transpose(-2, -1)) * scale
+                    attn = attn.softmax(dim=-1)  # [B, heads, N, N]
+                    
+                    # Average over heads
+                    attn_avg = attn.mean(dim=1)  # [B, N, N]
+                    stored_attn.append(attn_avg.detach())
+                
+                return hook, stored_attn
+            
+            all_stored_attns = []
+            for block in self._model.blocks:
+                hook_fn, stored = create_attn_hook()
+                all_stored_attns.append(stored)
+                handle = block.attn.register_forward_hook(hook_fn)
+                handles.append(handle)
+            
+            try:
+                with torch.no_grad():
+                    logits = self._model(image_tensor)
+                    probs = F.softmax(logits, dim=1)
+                    prob_fake = probs[0, 1].item()
+                    pred_int = 1 if prob_fake >= self._threshold else 0
+                
+                # Get attention from hooks
+                attention_list = [stored[0] for stored in all_stored_attns if len(stored) > 0]
+                
+                if attention_list:
+                    # Stack: [num_layers, B, N, N]
+                    attention_stack = torch.stack(attention_list, dim=0)
+                    # Compute rollout - returns (grid_size, grid_size) heatmap
+                    attention_map = attention_rollout(
+                        attention_stack[:, 0],  # [num_layers, N, N]
+                        head_fusion="mean",  # Already averaged
+                        discard_ratio=0.0,
+                        num_prefix_tokens=2  # DeiT has CLS + distillation token
+                    )  # Returns (14, 14) for DeiT-Base
+                    
+                    # Resize to image size
+                    from PIL import Image as PILImage
+                    heatmap_img = PILImage.fromarray(
+                        (attention_map * 255).astype(np.uint8)
+                    ).resize((224, 224), PILImage.BILINEAR)
+                    heatmap = np.array(heatmap_img).astype(np.float32) / 255.0
+                    
+            finally:
+                for handle in handles:
+                    handle.remove()
+        else:
+            with torch.no_grad():
+                # In eval mode, DeiT returns single tensor
+                logits = self._model(image_tensor)
+                probs = F.softmax(logits, dim=1)
+                prob_fake = probs[0, 1].item()
+                pred_int = 1 if prob_fake >= self._threshold else 0
+        
+        result = {
             "logits": logits[0].cpu().numpy().tolist(),
             "prob_fake": prob_fake,
             "pred_int": pred_int
         }
+        
+        if heatmap is not None:
+            result["heatmap"] = heatmap
+        
+        return result
     
     def predict(
         self,
         image: Optional[Image.Image] = None,
         image_bytes: Optional[bytes] = None,
+        explain: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -162,9 +248,10 @@ class DeiTDistilledWrapper(BaseSubmodelWrapper):
         Args:
             image: PIL Image object
             image_bytes: Raw image bytes (will be converted to PIL Image)
+            explain: If True, compute attention rollout heatmap
             
         Returns:
-            Standardized prediction dictionary
+            Standardized prediction dictionary with optional heatmap
         """
         if self._model is None or self._transform is None:
             raise InferenceError(
@@ -189,13 +276,13 @@ class DeiTDistilledWrapper(BaseSubmodelWrapper):
             image_tensor = self._transform(image).unsqueeze(0).to(self._device)
             
             # Run inference
-            result = self._run_inference(image_tensor)
+            result = self._run_inference(image_tensor, explain=explain)
             
             # Standardize output
             class_mapping = self.config.get("class_mapping", {"0": "real", "1": "fake"})
             pred_int = result["pred_int"]
             
-            return {
+            output = {
                 "pred_int": pred_int,
                 "pred": class_mapping.get(str(pred_int), "unknown"),
                 "prob_fake": result["prob_fake"],
@@ -205,6 +292,13 @@ class DeiTDistilledWrapper(BaseSubmodelWrapper):
                     "logits": result["logits"]
                 }
             }
+            
+            # Add heatmap if requested
+            if explain and "heatmap" in result:
+                output["heatmap_base64"] = heatmap_to_base64(result["heatmap"])
+                output["explainability_type"] = "attention_rollout"
+            
+            return output
             
         except InferenceError:
             raise

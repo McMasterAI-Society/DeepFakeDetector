@@ -23,6 +23,14 @@ class PredictionResult(BaseModel):
         le=1.0,
         description="Probability that the image is fake (0.0-1.0)"
     )
+    heatmap_base64: Optional[str] = Field(
+        None,
+        description="Base64-encoded PNG heatmap showing model attention/saliency (when explain=true)"
+    )
+    explainability_type: Optional[Literal["grad_cam", "attention_rollout"]] = Field(
+        None,
+        description="Type of explainability method used"
+    )
 
 
 class TimingInfo(BaseModel):

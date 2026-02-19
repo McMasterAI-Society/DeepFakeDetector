@@ -15,6 +15,7 @@ export interface AdvancedOptionsState {
   useFusion: boolean;
   returnSubmodels: boolean;
   model: string;
+  explain: boolean;
 }
 
 interface AdvancedOptionsProps {
@@ -77,6 +78,24 @@ const AdvancedOptions = ({ options, onChange, disabled }: AdvancedOptionsProps) 
                   onCheckedChange={(v) => onChange({ ...options, returnSubmodels: v })}
                   disabled={disabled}
                   aria-label="Toggle submodel results display"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="explain-toggle" className="text-sm text-foreground cursor-pointer">
+                    Show Explainability Heatmaps
+                  </Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Visualize model attention regions
+                  </p>
+                </div>
+                <Switch
+                  id="explain-toggle"
+                  checked={options.explain}
+                  onCheckedChange={(v) => onChange({ ...options, explain: v })}
+                  disabled={disabled}
+                  aria-label="Toggle explainability heatmaps"
                 />
               </div>
 

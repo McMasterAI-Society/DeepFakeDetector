@@ -55,6 +55,10 @@ async def predict(
     return_submodels: Optional[bool] = Query(
         None,
         description="Include individual submodel predictions in response. Defaults to true when use_fusion=true"
+    ),
+    explain: bool = Query(
+        False,
+        description="Generate explainability heatmaps (Grad-CAM for CNNs, attention rollout for transformers)"
     )
 ) -> PredictResponse:
     """
@@ -95,7 +99,8 @@ async def predict(
             # Run all submodels
             with timer.measure("inference"):
                 submodel_outputs = inference_service.predict_all_submodels(
-                    image_bytes=image_bytes
+                    image_bytes=image_bytes,
+                    explain=explain
                 )
             
             # Run fusion
@@ -116,7 +121,9 @@ async def predict(
                     name: PredictionResult(
                         pred=output["pred"],
                         pred_int=output["pred_int"],
-                        prob_fake=output["prob_fake"]
+                        prob_fake=output["prob_fake"],
+                        heatmap_base64=output.get("heatmap_base64"),
+                        explainability_type=output.get("explainability_type")
                     )
                     for name, output in submodel_outputs.items()
                 } if should_return_submodels else None,
@@ -130,7 +137,8 @@ async def predict(
             with timer.measure("inference"):
                 result = inference_service.predict_single(
                     model_key=model_key,
-                    image_bytes=image_bytes
+                    image_bytes=image_bytes,
+                    explain=explain
                 )
             
             timer.stop_total()
@@ -139,7 +147,9 @@ async def predict(
                 final=PredictionResult(
                     pred=result["pred"],
                     pred_int=result["pred_int"],
-                    prob_fake=result["prob_fake"]
+                    prob_fake=result["prob_fake"],
+                    heatmap_base64=result.get("heatmap_base64"),
+                    explainability_type=result.get("explainability_type")
                 ),
                 fusion_used=False,
                 submodels=None,

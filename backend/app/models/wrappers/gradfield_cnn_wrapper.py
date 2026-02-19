@@ -4,17 +4,19 @@ Wrapper for Gradient Field CNN submodel.
 
 import json
 import math
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from PIL import Image
 from torchvision import transforms
 
 from app.core.errors import InferenceError, ConfigurationError
 from app.core.logging import get_logger
 from app.models.wrappers.base_wrapper import BaseSubmodelWrapper
+from app.services.explainability import heatmap_to_base64
 
 logger = get_logger(__name__)
 
@@ -217,24 +219,101 @@ class GradfieldCNNWrapper(BaseSubmodelWrapper):
         )
         return luminance.unsqueeze(0)
     
-    def _run_inference(self, luminance_tensor: torch.Tensor) -> Dict[str, Any]:
+    def _run_inference(
+        self,
+        luminance_tensor: torch.Tensor,
+        explain: bool = False
+    ) -> Dict[str, Any]:
         """Run model inference on preprocessed luminance tensor."""
-        with torch.no_grad():
-            logits, embedding = self._model(luminance_tensor)
-            prob_fake = torch.sigmoid(logits).item()
-            pred_int = 1 if prob_fake >= self._threshold else 0
+        heatmap = None
+        
+        if explain:
+            # Custom GradCAM implementation for single-logit binary model
+            # Using absolute CAM values to capture both positive and negative contributions
+            # Target the last Conv2d layer (cnn[-5])
+            target_layer = self._model.cnn[-5]
             
-        return {
-            "logits": logits.cpu().numpy().tolist(),
+            activations = None
+            gradients = None
+            
+            def forward_hook(module, input, output):
+                nonlocal activations
+                activations = output.detach()
+            
+            def backward_hook(module, grad_input, grad_output):
+                nonlocal gradients
+                gradients = grad_output[0].detach()
+            
+            h_fwd = target_layer.register_forward_hook(forward_hook)
+            h_bwd = target_layer.register_full_backward_hook(backward_hook)
+            
+            try:
+                # Forward pass with gradients
+                input_tensor = luminance_tensor.clone().requires_grad_(True)
+                logits, embedding = self._model(input_tensor)
+                prob_fake = torch.sigmoid(logits).item()
+                pred_int = 1 if prob_fake >= self._threshold else 0
+                
+                # Backward pass
+                self._model.zero_grad()
+                logits.backward()
+                
+                if gradients is not None and activations is not None:
+                    # Compute Grad-CAM weights (global average pooled gradients)
+                    weights = gradients.mean(dim=(2, 3), keepdim=True)  # [1, C, 1, 1]
+                    
+                    # Weighted combination of activation maps
+                    cam = (weights * activations).sum(dim=1, keepdim=True)  # [1, 1, H, W]
+                    
+                    # Use absolute values instead of ReLU to capture all contributions
+                    # This is important for models where negative gradients carry meaning
+                    cam = torch.abs(cam)
+                    
+                    # Normalize to [0, 1]
+                    cam = cam - cam.min()
+                    cam_max = cam.max()
+                    if cam_max > 0:
+                        cam = cam / cam_max
+                    
+                    # Resize to output size (256x256)
+                    cam = F.interpolate(
+                        cam,
+                        size=(256, 256),
+                        mode='bilinear',
+                        align_corners=False
+                    )
+                    
+                    heatmap = cam.squeeze().cpu().numpy()
+                else:
+                    logger.warning("GradCAM: gradients or activations not captured")
+                    heatmap = np.zeros((256, 256), dtype=np.float32)
+                    
+            finally:
+                h_fwd.remove()
+                h_bwd.remove()
+        else:
+            with torch.no_grad():
+                logits, embedding = self._model(luminance_tensor)
+                prob_fake = torch.sigmoid(logits).item()
+                pred_int = 1 if prob_fake >= self._threshold else 0
+        
+        result = {
+            "logits": logits.detach().cpu().numpy().tolist() if hasattr(logits, 'detach') else logits.cpu().numpy().tolist(),
             "prob_fake": prob_fake,
             "pred_int": pred_int,
-            "embedding": embedding.cpu().numpy().tolist()
+            "embedding": embedding.detach().cpu().numpy().tolist() if explain else embedding.cpu().numpy().tolist()
         }
+        
+        if heatmap is not None:
+            result["heatmap"] = heatmap
+        
+        return result
     
     def predict(
         self,
         image: Optional[Image.Image] = None,
         image_bytes: Optional[bytes] = None,
+        explain: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -243,9 +322,10 @@ class GradfieldCNNWrapper(BaseSubmodelWrapper):
         Args:
             image: PIL Image object
             image_bytes: Raw image bytes (will be converted to PIL Image)
+            explain: If True, compute GradCAM heatmap
             
         Returns:
-            Standardized prediction dictionary
+            Standardized prediction dictionary with optional heatmap
         """
         if self._model is None or self._resize is None:
             raise InferenceError(
@@ -277,13 +357,13 @@ class GradfieldCNNWrapper(BaseSubmodelWrapper):
             luminance = luminance.unsqueeze(0).to(self._device)  # Add batch dim
             
             # Run inference
-            result = self._run_inference(luminance)
+            result = self._run_inference(luminance, explain=explain)
             
             # Standardize output
             labels = self.config.get("labels", {"0": "real", "1": "fake"})
             pred_int = result["pred_int"]
             
-            return {
+            output = {
                 "pred_int": pred_int,
                 "pred": labels.get(str(pred_int), "unknown"),
                 "prob_fake": result["prob_fake"],
@@ -292,6 +372,13 @@ class GradfieldCNNWrapper(BaseSubmodelWrapper):
                     "threshold": self._threshold
                 }
             }
+            
+            # Add heatmap if requested
+            if explain and "heatmap" in result:
+                output["heatmap_base64"] = heatmap_to_base64(result["heatmap"])
+                output["explainability_type"] = "grad_cam"
+            
+            return output
             
         except InferenceError:
             raise

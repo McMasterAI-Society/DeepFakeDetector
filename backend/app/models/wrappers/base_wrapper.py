@@ -92,6 +92,7 @@ class BaseSubmodelWrapper(BaseModelWrapper):
         self,
         image: Optional[Image.Image] = None,
         image_bytes: Optional[bytes] = None,
+        explain: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -100,10 +101,16 @@ class BaseSubmodelWrapper(BaseModelWrapper):
         Args:
             image: PIL Image object
             image_bytes: Raw image bytes (alternative to image)
+            explain: If True, include explainability heatmap in output
             **kwargs: Additional arguments
             
         Returns:
-            Standardized prediction dictionary
+            Standardized prediction dictionary with:
+            - pred_int: 0 (real) or 1 (fake)
+            - pred: "real" or "fake"
+            - prob_fake: float probability
+            - heatmap_base64: Optional[str] (when explain=True)
+            - explainability_type: Optional[str] (when explain=True)
         """
         pass
 

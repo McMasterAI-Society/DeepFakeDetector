@@ -12,9 +12,21 @@ import { Button } from "@/components/ui/button";
 type AppState = "idle" | "ready" | "loading" | "success" | "error";
 
 interface PredictionResult {
-  final: { pred: "real" | "fake"; pred_int: number; prob_fake: number };
+  final: { 
+    pred: "real" | "fake"; 
+    pred_int: number; 
+    prob_fake: number;
+    heatmap_base64?: string;
+    explainability_type?: "grad_cam" | "attention_rollout";
+  };
   fusion_used: boolean;
-  submodels: Record<string, { pred: "real" | "fake"; pred_int: number; prob_fake: number }> | null;
+  submodels: Record<string, { 
+    pred: "real" | "fake"; 
+    pred_int: number; 
+    prob_fake: number;
+    heatmap_base64?: string;
+    explainability_type?: "grad_cam" | "attention_rollout";
+  }> | null;
   timing_ms: { total: number; inference?: number; fusion?: number };
 }
 
@@ -29,6 +41,7 @@ const Index = () => {
     useFusion: true,
     returnSubmodels: true,
     model: "test-random-a",
+    explain: false,
   });
 
   const handleFileSelect = useCallback((f: File | null) => {
@@ -54,6 +67,7 @@ const Index = () => {
     const params = new URLSearchParams();
     params.set("use_fusion", String(options.useFusion));
     params.set("return_submodels", String(options.returnSubmodels));
+    params.set("explain", String(options.explain));
     if (!options.useFusion) {
       params.set("model", options.model);
     }

@@ -3,11 +3,12 @@ Wrapper for CNN Transfer (EfficientNet-B0) submodel.
 """
 
 import json
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from PIL import Image
 from torchvision import transforms
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
@@ -15,6 +16,7 @@ from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 from app.core.errors import InferenceError, ConfigurationError
 from app.core.logging import get_logger
 from app.models.wrappers.base_wrapper import BaseSubmodelWrapper
+from app.services.explainability import GradCAM, heatmap_to_base64
 
 logger = get_logger(__name__)
 
@@ -102,24 +104,56 @@ class CNNTransferWrapper(BaseSubmodelWrapper):
                 details={"repo_id": self.repo_id, "error": str(e)}
             )
     
-    def _run_inference(self, image_tensor: torch.Tensor) -> Dict[str, Any]:
+    def _run_inference(
+        self,
+        image_tensor: torch.Tensor,
+        explain: bool = False
+    ) -> Dict[str, Any]:
         """Run model inference on preprocessed tensor."""
-        with torch.no_grad():
-            logits = self._model(image_tensor)
-            probs = F.softmax(logits, dim=1)
-            prob_fake = probs[0, 1].item()  # Index 1 is "fake"
-            pred_int = 1 if prob_fake >= self._threshold else 0
-            
-        return {
-            "logits": logits[0].cpu().numpy().tolist(),
+        heatmap = None
+        
+        if explain:
+            # Use GradCAM for explainability (requires gradients)
+            target_layer = self._model.features[-1]  # Last MBConv block
+            gradcam = GradCAM(self._model, target_layer)
+            try:
+                # GradCAM needs gradients, so don't use no_grad
+                logits = self._model(image_tensor)
+                probs = F.softmax(logits, dim=1)
+                prob_fake = probs[0, 1].item()
+                pred_int = 1 if prob_fake >= self._threshold else 0
+                
+                # Compute heatmap for predicted class
+                heatmap = gradcam(
+                    image_tensor.clone(),
+                    target_class=pred_int,
+                    output_size=(224, 224)
+                )
+            finally:
+                gradcam.remove_hooks()
+        else:
+            with torch.no_grad():
+                logits = self._model(image_tensor)
+                probs = F.softmax(logits, dim=1)
+                prob_fake = probs[0, 1].item()
+                pred_int = 1 if prob_fake >= self._threshold else 0
+        
+        result = {
+            "logits": logits[0].detach().cpu().numpy().tolist(),
             "prob_fake": prob_fake,
             "pred_int": pred_int
         }
+        
+        if heatmap is not None:
+            result["heatmap"] = heatmap
+        
+        return result
     
     def predict(
         self,
         image: Optional[Image.Image] = None,
         image_bytes: Optional[bytes] = None,
+        explain: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -128,9 +162,10 @@ class CNNTransferWrapper(BaseSubmodelWrapper):
         Args:
             image: PIL Image object
             image_bytes: Raw image bytes (will be converted to PIL Image)
+            explain: If True, compute GradCAM heatmap
             
         Returns:
-            Standardized prediction dictionary
+            Standardized prediction dictionary with optional heatmap
         """
         if self._model is None or self._transform is None:
             raise InferenceError(
@@ -155,13 +190,13 @@ class CNNTransferWrapper(BaseSubmodelWrapper):
             image_tensor = self._transform(image).unsqueeze(0).to(self._device)
             
             # Run inference
-            result = self._run_inference(image_tensor)
+            result = self._run_inference(image_tensor, explain=explain)
             
             # Standardize output
             labels = self.config.get("labels", {"0": "real", "1": "fake"})
             pred_int = result["pred_int"]
             
-            return {
+            output = {
                 "pred_int": pred_int,
                 "pred": labels.get(str(pred_int), "unknown"),
                 "prob_fake": result["prob_fake"],
@@ -171,6 +206,13 @@ class CNNTransferWrapper(BaseSubmodelWrapper):
                     "logits": result["logits"]
                 }
             }
+            
+            # Add heatmap if requested
+            if explain and "heatmap" in result:
+                output["heatmap_base64"] = heatmap_to_base64(result["heatmap"])
+                output["explainability_type"] = "grad_cam"
+            
+            return output
             
         except InferenceError:
             raise
