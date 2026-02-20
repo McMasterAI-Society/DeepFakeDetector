@@ -2,8 +2,39 @@
 Pydantic schemas for prediction endpoints.
 """
 
-from typing import Dict, Literal, Optional
+from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
+
+
+# LLM Explanation schemas
+class ModelInsight(BaseModel):
+    """LLM-generated insight for a single model's prediction."""
+    
+    what_model_relied_on: str = Field(
+        ...,
+        description="One sentence describing what the model focused on"
+    )
+    possible_cues: List[str] = Field(
+        ...,
+        description="2-4 possible visual cues to check (with hedging language)"
+    )
+    confidence_note: str = Field(
+        ...,
+        description="Note about confidence based on prob_fake and focus pattern"
+    )
+
+
+class ExplanationResult(BaseModel):
+    """LLM-generated explanation for all model predictions."""
+    
+    per_model_insights: Dict[str, ModelInsight] = Field(
+        ...,
+        description="Insights keyed by model name"
+    )
+    consensus_summary: List[str] = Field(
+        ...,
+        description="2-3 bullets summarizing where models agreed/disagreed"
+    )
 
 
 class PredictionResult(BaseModel):
@@ -30,6 +61,10 @@ class PredictionResult(BaseModel):
     explainability_type: Optional[Literal["grad_cam", "attention_rollout"]] = Field(
         None,
         description="Type of explainability method used"
+    )
+    focus_summary: Optional[str] = Field(
+        None,
+        description="Brief description of where the model focused (e.g., 'concentrated on face region')"
     )
 
 
@@ -61,6 +96,10 @@ class PredictResponse(BaseModel):
     timing_ms: TimingInfo = Field(
         ...,
         description="Timing breakdown in milliseconds"
+    )
+    explanation: Optional[ExplanationResult] = Field(
+        None,
+        description="LLM-generated explanation of model predictions (when generate_explanation=true)"
     )
     
     class Config:

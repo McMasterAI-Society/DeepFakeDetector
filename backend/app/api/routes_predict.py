@@ -2,6 +2,7 @@
 Prediction routes.
 """
 
+import base64
 from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
@@ -19,12 +20,15 @@ from app.schemas.predict import (
     PredictResponse,
     PredictionResult,
     TimingInfo,
-    ErrorResponse
+    ErrorResponse,
+    ExplanationResult,
+    ModelInsight
 )
 from app.services.inference_service import get_inference_service
 from app.services.fusion_service import get_fusion_service
 from app.services.preprocess_service import get_preprocess_service
 from app.services.model_registry import get_model_registry
+from app.services.llm_service import get_llm_service
 from app.utils.timing import Timer
 
 logger = get_logger(__name__)
@@ -59,6 +63,10 @@ async def predict(
     explain: bool = Query(
         False,
         description="Generate explainability heatmaps (Grad-CAM for CNNs, attention rollout for transformers)"
+    ),
+    generate_explanation: bool = Query(
+        False,
+        description="Generate LLM-powered explanations of model predictions (requires GOOGLE_API_KEY)"
     )
 ) -> PredictResponse:
     """
@@ -107,6 +115,28 @@ async def predict(
             with timer.measure("fusion"):
                 final_result = fusion_service.fuse(submodel_outputs=submodel_outputs)
             
+            # Generate LLM explanation if requested
+            explanation_result = None
+            if generate_explanation and explain:
+                llm_service = get_llm_service()
+                if llm_service.enabled:
+                    with timer.measure("llm"):
+                        # Encode original image for LLM
+                        original_b64 = base64.b64encode(image_bytes).decode('utf-8')
+                        explanation_dict = llm_service.generate_explanation(
+                            original_image_b64=original_b64,
+                            submodel_outputs=submodel_outputs,
+                            include_images=True
+                        )
+                        if explanation_dict:
+                            explanation_result = ExplanationResult(
+                                per_model_insights={
+                                    name: ModelInsight(**insight)
+                                    for name, insight in explanation_dict.get("per_model_insights", {}).items()
+                                },
+                                consensus_summary=explanation_dict.get("consensus_summary", [])
+                            )
+            
             timer.stop_total()
             
             # Build response
@@ -123,11 +153,13 @@ async def predict(
                         pred_int=output["pred_int"],
                         prob_fake=output["prob_fake"],
                         heatmap_base64=output.get("heatmap_base64"),
-                        explainability_type=output.get("explainability_type")
+                        explainability_type=output.get("explainability_type"),
+                        focus_summary=output.get("focus_summary")
                     )
                     for name, output in submodel_outputs.items()
                 } if should_return_submodels else None,
-                timing_ms=TimingInfo(**timer.get_timings())
+                timing_ms=TimingInfo(**timer.get_timings()),
+                explanation=explanation_result
             )
         
         else:
@@ -141,6 +173,29 @@ async def predict(
                     explain=explain
                 )
             
+            # Generate LLM explanation if requested (single model)
+            explanation_result = None
+            if generate_explanation and explain:
+                llm_service = get_llm_service()
+                if llm_service.enabled:
+                    with timer.measure("llm"):
+                        original_b64 = base64.b64encode(image_bytes).decode('utf-8')
+                        # Wrap single result as submodel_outputs dict
+                        single_output = {model_key: result}
+                        explanation_dict = llm_service.generate_explanation(
+                            original_image_b64=original_b64,
+                            submodel_outputs=single_output,
+                            include_images=True
+                        )
+                        if explanation_dict:
+                            explanation_result = ExplanationResult(
+                                per_model_insights={
+                                    name: ModelInsight(**insight)
+                                    for name, insight in explanation_dict.get("per_model_insights", {}).items()
+                                },
+                                consensus_summary=explanation_dict.get("consensus_summary", [])
+                            )
+            
             timer.stop_total()
             
             return PredictResponse(
@@ -149,11 +204,13 @@ async def predict(
                     pred_int=result["pred_int"],
                     prob_fake=result["prob_fake"],
                     heatmap_base64=result.get("heatmap_base64"),
-                    explainability_type=result.get("explainability_type")
+                    explainability_type=result.get("explainability_type"),
+                    focus_summary=result.get("focus_summary")
                 ),
                 fusion_used=False,
                 submodels=None,
-                timing_ms=TimingInfo(**timer.get_timings())
+                timing_ms=TimingInfo(**timer.get_timings()),
+                explanation=explanation_result
             )
     
     except ImageProcessingError as e:

@@ -559,3 +559,109 @@ def compute_vit_attention_rollout(
         # Clean up hooks
         for h in hooks:
             h.remove()
+
+
+def compute_focus_summary(
+    heatmap: np.ndarray,
+    threshold: float = 0.5
+) -> str:
+    """
+    Compute a human-readable summary of where the heatmap focuses.
+    
+    Analyzes the heatmap to describe the spatial distribution of high
+    activation regions (e.g., "concentrated on upper-left", "diffuse across image").
+    
+    Args:
+        heatmap: 2D numpy array with values in [0, 1], shape (H, W)
+        threshold: Threshold for considering a region as "high activation"
+        
+    Returns:
+        Human-readable focus summary string
+    """
+    if heatmap is None or heatmap.size == 0:
+        return "no activation data available"
+    
+    # Normalize heatmap
+    heatmap = np.array(heatmap, dtype=np.float32)
+    if heatmap.max() > 0:
+        heatmap = heatmap / heatmap.max()
+    
+    h, w = heatmap.shape
+    
+    # Compute centroid of high activation regions
+    mask = heatmap > threshold
+    if not mask.any():
+        # Lower threshold if nothing above it
+        mask = heatmap > (heatmap.max() * 0.5)
+    
+    if not mask.any():
+        return "very low activation across entire image"
+    
+    # Get coordinates of activated pixels
+    y_coords, x_coords = np.where(mask)
+    
+    # Compute centroid
+    centroid_y = y_coords.mean() / h  # Normalized to [0, 1]
+    centroid_x = x_coords.mean() / w  # Normalized to [0, 1]
+    
+    # Compute spread (standard deviation normalized by image size)
+    spread_y = y_coords.std() / h if len(y_coords) > 1 else 0
+    spread_x = x_coords.std() / w if len(x_coords) > 1 else 0
+    spread = (spread_y + spread_x) / 2
+    
+    # Compute coverage (fraction of image with high activation)
+    coverage = mask.sum() / mask.size
+    
+    # Build description
+    parts = []
+    
+    # Describe spread
+    if spread < 0.15:
+        parts.append("highly concentrated")
+    elif spread < 0.25:
+        parts.append("moderately concentrated")
+    else:
+        parts.append("spread across")
+    
+    # Describe location
+    location_parts = []
+    
+    # Vertical position
+    if centroid_y < 0.33:
+        location_parts.append("upper")
+    elif centroid_y > 0.67:
+        location_parts.append("lower")
+    else:
+        location_parts.append("middle")
+    
+    # Horizontal position
+    if centroid_x < 0.33:
+        location_parts.append("left")
+    elif centroid_x > 0.67:
+        location_parts.append("right")
+    else:
+        location_parts.append("center")
+    
+    # Combine location (avoid "middle center")
+    if location_parts == ["middle", "center"]:
+        location = "central region"
+    else:
+        location = "-".join(location_parts) + " region"
+    
+    parts.append(location)
+    
+    # Add coverage note for diffuse patterns
+    if coverage > 0.4:
+        parts.append(f"(~{int(coverage*100)}% of image)")
+    
+    summary = " ".join(parts)
+    
+    # Add semantic hints based on common portrait regions
+    # Center typically = face, edges/corners = background
+    if centroid_y < 0.5 and 0.3 < centroid_x < 0.7 and spread < 0.2:
+        summary += " (likely face/subject area)"
+    elif spread > 0.3:
+        summary += " (examining multiple regions)"
+    
+    return summary
+

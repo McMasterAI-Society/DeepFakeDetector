@@ -21,7 +21,7 @@ except ImportError:
 from app.core.errors import InferenceError, ConfigurationError
 from app.core.logging import get_logger
 from app.models.wrappers.base_wrapper import BaseSubmodelWrapper
-from app.services.explainability import attention_rollout, heatmap_to_base64
+from app.services.explainability import attention_rollout, heatmap_to_base64, compute_focus_summary
 
 logger = get_logger(__name__)
 
@@ -295,8 +295,10 @@ class DeiTDistilledWrapper(BaseSubmodelWrapper):
             
             # Add heatmap if requested
             if explain and "heatmap" in result:
-                output["heatmap_base64"] = heatmap_to_base64(result["heatmap"])
+                heatmap = result["heatmap"]
+                output["heatmap_base64"] = heatmap_to_base64(heatmap)
                 output["explainability_type"] = "attention_rollout"
+                output["focus_summary"] = compute_focus_summary(heatmap)
             
             return output
             

@@ -16,7 +16,7 @@ from torchvision import transforms
 from app.core.errors import InferenceError, ConfigurationError
 from app.core.logging import get_logger
 from app.models.wrappers.base_wrapper import BaseSubmodelWrapper
-from app.services.explainability import heatmap_to_base64
+from app.services.explainability import heatmap_to_base64, compute_focus_summary
 
 logger = get_logger(__name__)
 
@@ -375,8 +375,10 @@ class GradfieldCNNWrapper(BaseSubmodelWrapper):
             
             # Add heatmap if requested
             if explain and "heatmap" in result:
-                output["heatmap_base64"] = heatmap_to_base64(result["heatmap"])
+                heatmap = result["heatmap"]
+                output["heatmap_base64"] = heatmap_to_base64(heatmap)
                 output["explainability_type"] = "grad_cam"
+                output["focus_summary"] = compute_focus_summary(heatmap) + " (edge-based analysis)"
             
             return output
             
