@@ -1,0 +1,25 @@
+# DeepFake Detector Backend - Python Dependencies
+
+# Web framework
+fastapi>=0.109.0,<1.0.0
+uvicorn[standard]>=0.27.0,<1.0.0
+
+# Data validation
+pydantic>=2.5.0,<3.0.0
+pydantic-settings>=2.1.0,<3.0.0
+
+# Image processing
+pillow>=10.2.0,<11.0.0
+
+# Hugging Face Hub
+huggingface_hub>=0.20.0,<1.0.0
+
+# HTTP client (optional, for testing)
+httpx>=0.26.0,<1.0.0
+
+# File uploads
+python-multipart>=0.0.6,<1.0.0
+
+# Testing
+pytest>=7.4.0,<9.0.0
+pytest-asyncio>=0.23.0,<1.0.0
