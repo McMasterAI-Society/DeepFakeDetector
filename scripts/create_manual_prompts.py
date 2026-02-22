@@ -108,6 +108,171 @@ PROMPTS = {
     "p098": "Generate a photo of a light switch on a wall.",
     "p099": "Generate a photo of a window view showing nearby buildings.",
     "p100": "Generate a photo of a table with scattered papers and a pen, natural daylight.",
+    # p101-p250: Extended prompts
+    "p101": "Generate a photorealistic image of a weathered wooden fence in a suburban backyard.",
+    "p102": "Generate a photorealistic image of a gravel driveway leading to a detached garage.",
+    "p103": "Generate a photorealistic image of an empty playground swing set at dusk.",
+    "p104": "Generate a photorealistic image of a puddle on asphalt reflecting streetlights.",
+    "p105": "Generate a photorealistic image of a cracked sidewalk with weeds growing through.",
+    "p106": "Generate a photorealistic image of a mailbox at the end of a rural dirt road.",
+    "p107": "Generate a photorealistic image of a fire hydrant on a city street corner.",
+    "p108": "Generate a photorealistic image of an overgrown garden bed in front of a house.",
+    "p109": "Generate a photorealistic image of a rusty chain-link fence around a vacant lot.",
+    "p110": "Generate a photorealistic image of a pothole filled with rainwater on a road.",
+    "p111": "Generate a photorealistic image of a power line pole against a cloudy sky.",
+    "p112": "Generate a photorealistic image of a storm drain grate on a wet street.",
+    "p113": "Generate a photorealistic image of a faded stop sign at a rural intersection.",
+    "p114": "Generate a photorealistic image of a broken streetlight in a parking lot.",
+    "p115": "Generate a photorealistic image of a picnic table in a public park.",
+    "p116": "Generate a photorealistic image of a trash can overflowing near a bus stop.",
+    "p117": "Generate a photorealistic image of a bicycle chained to a street sign pole.",
+    "p118": "Generate a photorealistic image of a newspaper vending machine on a sidewalk.",
+    "p119": "Generate a photorealistic image of a crosswalk button on a metal pole.",
+    "p120": "Generate a photorealistic image of a manhole cover on wet pavement.",
+    "p121": "Generate a photorealistic image of a faded parking space line in a lot.",
+    "p122": "Generate a photorealistic image of a drainage ditch beside a country road.",
+    "p123": "Generate a photorealistic image of a utility box on a residential street.",
+    "p124": "Generate a photorealistic image of a wooden telephone pole with flyers stapled.",
+    "p125": "Generate a photorealistic image of a metal bench at a train station platform.",
+    "p126": "Generate a photorealistic image of a farm barn exterior with peeling red paint.",
+    "p127": "Generate a photorealistic image of a harbor with cargo ships and cranes.",
+    "p128": "Generate a photorealistic image of a beach lifeguard tower at midday.",
+    "p129": "Generate a photorealistic image of a mountain trailhead sign with worn lettering.",
+    "p130": "Generate a photorealistic image of a vineyard row at sunset with golden light.",
+    "p131": "Generate a photorealistic image of a frozen pond with thin ice and snow edges.",
+    "p132": "Generate a photorealistic image of a covered bridge in autumn foliage.",
+    "p133": "Generate a photorealistic image of a campsite fire pit with charred logs.",
+    "p134": "Generate a photorealistic image of a desert highway stretching to the horizon.",
+    "p135": "Generate a photorealistic image of a fishing dock at calm lake in morning mist.",
+    "p136": "Generate a photorealistic image of a ski lodge exterior with snowdrifts.",
+    "p137": "Generate a photorealistic image of a windmill on flat farmland at dusk.",
+    "p138": "Generate a photorealistic image of a rocky coastal tide pool at low tide.",
+    "p139": "Generate a photorealistic image of a sunflower field under partly cloudy sky.",
+    "p140": "Generate a photorealistic image of a forest floor with fallen leaves and mushrooms.",
+    "p141": "Generate a photorealistic image of a city rooftop view with water towers.",
+    "p142": "Generate a photorealistic image of an abandoned rail yard with rusted tracks.",
+    "p143": "Generate a photorealistic image of a greenhouse interior with potted plants rows.",
+    "p144": "Generate a photorealistic image of a ferry terminal waiting area with benches.",
+    "p145": "Generate a photorealistic image of a foggy rural cemetery at dawn.",
+    "p146": "Generate a photorealistic image of a roadside fruit stand with handwritten signs.",
+    "p147": "Generate a photorealistic image of a quiet snow-covered city street at night.",
+    "p148": "Generate a photorealistic image of a riverbank picnic table with scattered crumbs.",
+    "p149": "Generate a photorealistic image of a small waterfall in a forest clearing.",
+    "p150": "Generate a photorealistic image of a dirt bike parked beside a trail.",
+    "p151": "Generate a photorealistic image of a classic car parked on a suburban street at sunset.",
+    "p152": "Generate a photorealistic image of a fishing pier extending into ocean waves.",
+    "p153": "Generate a photorealistic image of a construction worker's hard hat resting on concrete.",
+    "p154": "Generate a photorealistic image of a wet cobblestone street reflecting streetlights.",
+    "p155": "Generate a photorealistic image of a wind turbine field under cloudy sky.",
+    "p156": "Generate a photorealistic image of a rocky mountain summit with expansive valley below.",
+    "p157": "Generate a photorealistic image of a bicycle leaning against a brick wall with ivy.",
+    "p158": "Generate a photorealistic image of a greenhouse tomato vine close-up.",
+    "p159": "Generate a photorealistic image of a car interior dashboard at night.",
+    "p160": "Generate a photorealistic image of a snowplow clearing a suburban street.",
+    "p161": "Generate a photorealistic image of a small wooden cabin in forest during rainfall.",
+    "p162": "Generate a photorealistic image of a lighthouse interior staircase spiral.",
+    "p163": "Generate a photorealistic image of a backyard swimming pool with ripples.",
+    "p164": "Generate a photorealistic image of a dirt hiking boot resting on rocky terrain.",
+    "p165": "Generate a photorealistic image of a rainy bus window with city lights blurred.",
+    "p166": "Generate a photorealistic image of a ferris wheel at state fair during twilight.",
+    "p167": "Generate a photorealistic image of a beekeeper inspecting honeycomb frames.",
+    "p168": "Generate a photorealistic image of a vintage record player with vinyl spinning.",
+    "p169": "Generate a photorealistic image of a farmer's hand holding freshly picked radishes.",
+    "p170": "Generate a photorealistic image of a bookshelf corner with worn leather books.",
+    "p171": "Generate a photorealistic image of a golf course fairway at dawn with dew.",
+    "p172": "Generate a photorealistic image of a pottery wheel with wet clay mid-spin.",
+    "p173": "Generate a photorealistic image of a mechanic's toolbox inside dusty garage.",
+    "p174": "Generate a photorealistic image of a snowy mountain road with guardrail.",
+    "p175": "Generate a photorealistic image of a carnival game booth with stuffed prizes.",
+    "p176": "Generate a photorealistic image of a potter's kiln with ceramic pieces inside.",
+    "p177": "Generate a photorealistic image of a rustic wine barrel stacked in cellar.",
+    "p178": "Generate a photorealistic image of a foggy harbor with lobster traps stacked.",
+    "p179": "Generate a photorealistic image of a gravel quarry with heavy machinery.",
+    "p180": "Generate a photorealistic image of a roadside motel neon sign at dusk.",
+    "p181": "Generate a photorealistic image of a train crossing gate lowered on rural road.",
+    "p182": "Generate a photorealistic image of a campfire smoke rising into night sky.",
+    "p183": "Generate a photorealistic image of a fishing tackle box open on boat deck.",
+    "p184": "Generate a photorealistic image of a mailbox at end of snowy gravel driveway.",
+    "p185": "Generate a photorealistic image of a swing set in backyard with fallen leaves.",
+    "p186": "Generate a photorealistic image of an old cemetery headstone with lichen.",
+    "p187": "Generate a photorealistic image of a laundry room with stacked machines.",
+    "p188": "Generate a photorealistic image of a stone garden bench under wisteria.",
+    "p189": "Generate a photorealistic image of a chef's cutting board with diced vegetables.",
+    "p190": "Generate a photorealistic image of a desert cactus garden at midday.",
+    "p191": "Generate a photorealistic image of a subway station tiles and turnstile.",
+    "p192": "Generate a photorealistic image of a roofer laying shingles on sunny day.",
+    "p193": "Generate a photorealistic image of a vintage diner interior with red booths.",
+    "p194": "Generate a photorealistic image of a basketball court net close-up at dusk.",
+    "p195": "Generate a photorealistic image of an old brick factory chimney against blue sky.",
+    "p196": "Generate a photorealistic image of a garden hose coiled on weathered deck.",
+    "p197": "Generate a photorealistic image of a ski lift chair ascending mountain slope.",
+    "p198": "Generate a photorealistic image of a barber pole on brick storefront.",
+    "p199": "Generate a photorealistic image of a car wash tunnel with foam and brushes.",
+    "p200": "Generate a photorealistic image of a foggy tennis court early morning.",
+    "p201": "Generate a photorealistic image of a city parking garage spiral ramp.",
+    "p202": "Generate a photorealistic image of a rain gutter draining water during storm.",
+    "p203": "Generate a photorealistic image of a row boat moored in shallow lake.",
+    "p204": "Generate a photorealistic image of a hay bale stack in metal barn.",
+    "p205": "Generate a photorealistic image of a motorcycle helmet resting on handlebar.",
+    "p206": "Generate a photorealistic image of a broken streetlight on empty sidewalk.",
+    "p207": "Generate a photorealistic image of a hot tub on patio at night.",
+    "p208": "Generate a photorealistic image of a beachside bonfire pit after use.",
+    "p209": "Generate a photorealistic image of a museum hallway with arched ceiling.",
+    "p210": "Generate a photorealistic image of a mailman walking residential street.",
+    "p211": "Generate a photorealistic image of a flower delivery van parked on street.",
+    "p212": "Generate a photorealistic image of a fire escape ladder on apartment building.",
+    "p213": "Generate a photorealistic image of a junkyard stack of old appliances.",
+    "p214": "Generate a photorealistic image of a public restroom hand dryer on tile wall.",
+    "p215": "Generate a photorealistic image of a treehouse ladder leading up oak trunk.",
+    "p216": "Generate a photorealistic image of a snowy field fence line disappearing into distance.",
+    "p217": "Generate a photorealistic image of a weathered picket fence with roses.",
+    "p218": "Generate a photorealistic image of a vending machine glowing in dark hallway.",
+    "p219": "Generate a photorealistic image of a canoe stored upside down on dock.",
+    "p220": "Generate a photorealistic image of a rusty chain-link fence in overgrown lot.",
+    "p221": "Generate a photorealistic image of a bowling alley lanes with pins standing.",
+    "p222": "Generate a photorealistic image of a veterinarian examining cat on table.",
+    "p223": "Generate a photorealistic image of a hospital corridor with fluorescent lights.",
+    "p224": "Generate a photorealistic image of a church bell tower against sunset sky.",
+    "p225": "Generate a photorealistic image of a bicycle rack outside city library.",
+    "p226": "Generate a photorealistic image of a road construction zone with orange cones.",
+    "p227": "Generate a photorealistic image of a drive-in movie screen at twilight.",
+    "p228": "Generate a photorealistic image of a rooftop pigeon flock near ventilation units.",
+    "p229": "Generate a photorealistic image of a garden shed door ajar with tools inside.",
+    "p230": "Generate a photorealistic image of a snow-covered mailbox along rural highway.",
+    "p231": "Generate a photorealistic image of a hotel lobby chandelier reflecting on marble floor.",
+    "p232": "Generate a photorealistic image of a factory conveyor belt with cardboard boxes.",
+    "p233": "Generate a photorealistic image of a rocky coastal cliff under cloudy sky.",
+    "p234": "Generate a photorealistic image of a paint-splattered artist palette on studio table.",
+    "p235": "Generate a photorealistic image of a barn owl perched on fence post at dusk.",
+    "p236": "Generate a photorealistic image of a carnival cotton candy cart close-up.",
+    "p237": "Generate a photorealistic image of a sewing machine with fabric mid-stitch.",
+    "p238": "Generate a photorealistic image of a campsite tarp sheltering gear during rain.",
+    "p239": "Generate a photorealistic image of a broken escalator in empty mall.",
+    "p240": "Generate a photorealistic image of a newspaper stand on busy city corner.",
+    "p241": "Generate a photorealistic image of a library reading room with tall windows.",
+    "p242": "Generate a photorealistic image of a horse stable interior with hay on floor.",
+    "p243": "Generate a photorealistic image of a fire hydrant on cracked sidewalk corner.",
+    "p244": "Generate a photorealistic image of a delivery truck backing into loading dock.",
+    "p245": "Generate a photorealistic image of a greenhouse glass roof with condensation.",
+    "p246": "Generate a photorealistic image of a fishing boat docked at wooden pier.",
+    "p247": "Generate a photorealistic image of a weathered basketball backboard in alley.",
+    "p248": "Generate a photorealistic image of a rainy day puddle reflecting building.",
+    "p249": "Generate a photorealistic image of a dentist office chair under bright light.",
+    "p250": "Generate a photorealistic image of a rocky mountain stream flowing over uneven stones.",
+}
+
+# Demo prompts - highly detailed photorealistic prompts for demonstration
+DEMO_PROMPTS = {
+    "d001": "Create a highly photorealistic candid image of a commuter standing on a rainy train platform at night, captured on a full-frame DSLR with an 85mm f/1.8 lens. Wet pavement reflections, subtle motion blur from passing train lights, realistic skin texture with slight blemishes, damp hair strands sticking together, mixed cool fluorescent and warm sodium lighting, mild chromatic aberration near edges, natural sensor grain in darker areas.",
+    "d002": "Create a highly photorealistic macro image of a cracked smartphone screen lying on a wooden desk, shot with a 100mm macro lens. Realistic micro-scratches, dust particles on glass surface, natural light from a nearby window, shallow depth of field falloff, slight lens distortion, authentic reflections and imperfect fingerprint smudges.",
+    "d003": "Create a highly photorealistic landscape image of a fog-covered mountain valley at sunrise, captured with a 70-200mm telephoto lens. Atmospheric haze layering, gradual light gradient in sky, realistic tree density variation, subtle shadow detail in valley floor, accurate depth compression and natural color grading.",
+    "d004": "Create a highly photorealistic image of a busy commercial kitchen prep station, stainless steel surfaces with visible fingerprints and smudges, steam rising from hot pan, overhead fluorescent lighting casting realistic shadows, minor grease splatter on counter, natural clutter and asymmetry.",
+    "d005": "Create a highly photorealistic image of a snow-covered residential street during light snowfall at dusk, shot with a 35mm lens. Falling snowflakes captured at varying motion blur lengths, cold blue ambient tones mixed with warm window lights, tire tracks in fresh snow, realistic atmospheric diffusion.",
+    "d006": "Create a highly photorealistic wildlife image of a deer standing near the edge of a forest clearing, captured with a 300mm telephoto lens. Natural fur texture with uneven strands, subtle breath condensation in cool air, realistic depth separation from blurred background foliage, accurate shadow falloff.",
+    "d007": "Create a highly photorealistic interior image of a cluttered garage workshop, concrete floor with oil stains, tools hanging slightly uneven on pegboard, single overhead bulb casting harsh directional shadows, realistic dust in air illuminated by light beam, natural color temperature imbalance.",
+    "d008": "Create a highly photorealistic image of ocean waves crashing against a rocky cliff during overcast weather, captured with a 70mm lens. Fine sea spray misting the air, motion blur in water while rocks remain sharp, realistic foam texture variation, muted natural color palette.",
+    "d009": "Create a highly photorealistic image of a city street viewed through a rain-covered car windshield at night, shallow focus on water droplets, distorted bokeh from streetlights, realistic interior dashboard reflection, natural sensor noise in darker areas.",
+    "d010": "Create a highly photorealistic close-up of a ceramic coffee mug with visible chips and minor glaze imperfections, sitting on a textured wooden table in morning light. Subtle steam rising with natural diffusion, realistic wood grain detail, accurate light bounce and shadow softness.",
 }
 
 
@@ -120,15 +285,17 @@ def main():
     datasets_dir = project_root / "datasets"
     manual_gen_dir = datasets_dir / "manual-gen-images"
     prompts_dir = manual_gen_dir / "prompts"
+    demoprompts_dir = manual_gen_dir / "demoprompts"
     images_dir = manual_gen_dir / "images"
     
     # Create directories if they don't exist
     prompts_dir.mkdir(parents=True, exist_ok=True)
+    demoprompts_dir.mkdir(parents=True, exist_ok=True)
     images_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"Created directory structure at: {manual_gen_dir}")
     
-    # Create prompt files
+    # Create prompt files (p001-p250)
     created_count = 0
     for prompt_id, prompt_text in PROMPTS.items():
         prompt_file = prompts_dir / f"{prompt_id}.txt"
@@ -136,6 +303,15 @@ def main():
         created_count += 1
     
     print(f"Created {created_count} prompt files in: {prompts_dir}")
+    
+    # Create demo prompt files (d001-d010)
+    demo_count = 0
+    for demo_id, demo_text in DEMO_PROMPTS.items():
+        demo_file = demoprompts_dir / f"{demo_id}.txt"
+        demo_file.write_text(demo_text, encoding="utf-8")
+        demo_count += 1
+    
+    print(f"Created {demo_count} demo prompt files in: {demoprompts_dir}")
     print("Done!")
 
 
