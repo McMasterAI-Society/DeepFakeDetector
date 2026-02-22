@@ -39,6 +39,89 @@ MODEL_TYPE_DESCRIPTIONS = {
     }
 }
 
+# User-facing display information for each model (used in frontend)
+MODEL_DISPLAY_INFO = {
+    "cnn-transfer": {
+        "display_name": "Texture Analysis",
+        "short_name": "CNN",
+        "method_name": "Grad-CAM",
+        "method_description": "Gradient-weighted Class Activation Mapping",
+        "educational_text": (
+            "This model examines fine-grained texture patterns and pixel-level details. "
+            "The heatmap highlights regions where texture anomalies were detected. "
+            "AI-generated images often have subtle texture inconsistencies - overly smooth skin, "
+            "unnatural fabric patterns, or repetitive background textures that this model can detect."
+        ),
+        "what_it_looks_for": [
+            "Skin texture uniformity vs natural variation",
+            "Fine detail preservation at edges and boundaries",
+            "Color gradient smoothness and shading realism"
+        ]
+    },
+    "vit-base": {
+        "display_name": "Patch Consistency",
+        "short_name": "ViT",
+        "method_name": "Attention Rollout",
+        "method_description": "Aggregated attention across all transformer layers",
+        "educational_text": (
+            "This model analyzes how different parts of the image relate to each other. "
+            "The heatmap shows which image patches drew the most attention. "
+            "AI-generated images may have inconsistencies between regions - "
+            "mismatched lighting, perspective errors, or elements that don't quite fit together."
+        ),
+        "what_it_looks_for": [
+            "Consistency of lighting across the image",
+            "Spatial relationships between objects",
+            "Background-foreground coherence"
+        ]
+    },
+    "deit-distilled": {
+        "display_name": "Global Structure",
+        "short_name": "DeiT",
+        "method_name": "Attention Rollout",
+        "method_description": "Distilled attention patterns from teacher model",
+        "educational_text": (
+            "This model uses knowledge distillation to detect global structural anomalies. "
+            "The heatmap reveals areas where the overall image structure seems inconsistent. "
+            "AI-generated images sometimes have subtle global issues - "
+            "like depth inconsistencies or anatomical improbabilities."
+        ),
+        "what_it_looks_for": [
+            "Global-to-local consistency",
+            "Depth and perspective coherence",
+            "Structural plausibility of objects"
+        ]
+    },
+    "gradfield-cnn": {
+        "display_name": "Edge Coherence",
+        "short_name": "GradField",
+        "method_name": "Gradient Field Analysis",
+        "method_description": "Analysis of image gradient patterns and edge transitions",
+        "educational_text": (
+            "This model analyzes edge patterns and how colors transition across boundaries. "
+            "The heatmap highlights areas with unusual edge characteristics. "
+            "AI-generated images often have telltale edge artifacts - "
+            "unnaturally sharp or blurry boundaries, inconsistent edge directions, or gradient anomalies."
+        ),
+        "what_it_looks_for": [
+            "Edge sharpness consistency",
+            "Natural boundary transitions",
+            "Gradient flow coherence"
+        ]
+    }
+}
+
+def get_model_display_info(model_name: str) -> Dict[str, Any]:
+    """Get display info for a model, with fallback for unknown models."""
+    return MODEL_DISPLAY_INFO.get(model_name, {
+        "display_name": model_name.replace("-", " ").title(),
+        "short_name": model_name[:3].upper(),
+        "method_name": "Analysis",
+        "method_description": "Model-specific analysis",
+        "educational_text": f"This model ({model_name}) analyzes the image for signs of AI generation.",
+        "what_it_looks_for": ["Image anomalies", "Generation artifacts"]
+    })
+
 SYSTEM_PROMPT = """You are an AI image analysis interpreter for a deepfake detection system. Your role is to translate model evidence into human-understandable hypotheses.
 
 CRITICAL RULES:
@@ -315,6 +398,177 @@ Respond with valid JSON only, no markdown formatting."""
                 },
                 "consensus_summary": ["Model analysis completed but detailed explanation unavailable."]
             }
+    
+    def generate_single_model_explanation(
+        self,
+        model_name: str,
+        prob_fake: float,
+        original_image_b64: Optional[str] = None,
+        heatmap_b64: Optional[str] = None,
+        focus_summary: Optional[str] = None,
+        contribution_percentage: Optional[float] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Generate LLM explanation for a single model's prediction.
+        
+        This is more token-efficient than generating all explanations at once,
+        and allows users to request explanations on-demand per model.
+        
+        Args:
+            model_name: Name of the model (e.g., "cnn-transfer")
+            prob_fake: The model's fake probability
+            original_image_b64: Base64-encoded original image
+            heatmap_b64: Base64-encoded heatmap overlay
+            focus_summary: Text summary of where model focused
+            contribution_percentage: How much this model contributed to fusion decision
+            
+        Returns:
+            Dict with insight for this model or None if generation fails
+        """
+        if not self._enabled:
+            logger.warning("LLM explanations requested but service not enabled")
+            return None
+        
+        try:
+            # Get display info for this model
+            display_info = get_model_display_info(model_name)
+            model_type_info = MODEL_TYPE_DESCRIPTIONS.get(model_name, {
+                "type": "unknown",
+                "description": "Unknown model type",
+                "typical_cues": []
+            })
+            
+            # Build focused prompt for single model
+            prompt = f"""You are analyzing a single model's output from a deepfake detection system.
+
+MODEL INFORMATION:
+- Display Name: {display_info['display_name']}
+- Analysis Method: {display_info['method_name']} ({display_info['method_description']})
+- What It Analyzes: {model_type_info['description']}
+- Typical Cues It Detects: {', '.join(model_type_info['typical_cues'])}
+
+DETECTION RESULTS:
+- Fake Probability: {prob_fake:.1%}
+- Prediction: {"Likely AI-Generated" if prob_fake >= 0.5 else "Likely Real"}
+- Focus Summary: {focus_summary or "Not available"}
+{f"- Contribution to Final Decision: {contribution_percentage:.1f}%" if contribution_percentage else ""}
+
+The heatmap shows where this model focused its attention. Brighter/warmer colors indicate higher attention.
+
+TASK:
+Analyze the image and heatmap to explain what this specific model detected. Provide:
+1. A clear explanation of what the model focused on and why it might indicate AI generation (or authenticity)
+2. 2-4 specific visual cues a human could verify, phrased as hypotheses with hedging language
+3. A confidence assessment based on the probability and focus pattern
+
+CRITICAL: Use hedging language - "may", "suggests", "possible", "could indicate". Never claim certainty.
+
+Respond with valid JSON matching this exact structure:
+{{
+  "key_finding": "One sentence main finding about what the model detected",
+  "what_model_saw": "2-3 sentences explaining what the model detected and why it matters",
+  "important_regions": ["Region 1 with hedging language", "Region 2...", "Region 3..."],
+  "confidence_qualifier": "Assessment of reliability with appropriate hedging"
+}}
+
+Respond with valid JSON only, no markdown formatting."""
+            
+            # Build content parts
+            content_parts = []
+            
+            if original_image_b64:
+                from google.genai import types
+                content_parts.append(types.Part.from_bytes(
+                    data=base64.b64decode(original_image_b64),
+                    mime_type="image/png"
+                ))
+                content_parts.append(types.Part.from_text(text="Original image shown above.\n\n"))
+            
+            if heatmap_b64:
+                from google.genai import types
+                content_parts.append(types.Part.from_bytes(
+                    data=base64.b64decode(heatmap_b64),
+                    mime_type="image/png"
+                ))
+                content_parts.append(types.Part.from_text(text=f"{display_info['method_name']} heatmap shown above.\n\n"))
+            
+            from google.genai import types
+            content_parts.append(types.Part.from_text(text=prompt))
+            
+            # Call the LLM with JSON response mode
+            logger.info(f"Generating LLM explanation for {model_name}...")
+            
+            response = self._client.models.generate_content(
+                model=self._model_name,
+                contents=content_parts,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    top_p=0.8,
+                    max_output_tokens=2048,  # Increased to avoid truncation
+                    response_mime_type="application/json",
+                )
+            )
+            
+            # Parse response - even with JSON mode, sometimes there are issues
+            text = response.text.strip()
+            
+            try:
+                result = json.loads(text)
+            except json.JSONDecodeError as parse_err:
+                # Log the problematic text for debugging
+                logger.warning(f"Initial JSON parse failed: {parse_err}")
+                logger.warning(f"Raw text (first 500 chars): {repr(text[:500])}")
+                
+                # Try to fix common issues: newlines inside strings
+                # Replace literal newlines with escaped ones, but only inside quoted strings
+                import re
+                
+                # More robust approach: find all string values and escape newlines
+                def escape_newlines_in_strings(s):
+                    result = []
+                    in_string = False
+                    escape_next = False
+                    for i, c in enumerate(s):
+                        if escape_next:
+                            result.append(c)
+                            escape_next = False
+                            continue
+                        if c == '\\':
+                            escape_next = True
+                            result.append(c)
+                            continue
+                        if c == '"' and not escape_next:
+                            in_string = not in_string
+                            result.append(c)
+                            continue
+                        if in_string and c == '\n':
+                            result.append('\\n')
+                        elif in_string and c == '\r':
+                            result.append('\\r')
+                        else:
+                            result.append(c)
+                    return ''.join(result)
+                
+                fixed_text = escape_newlines_in_strings(text)
+                result = json.loads(fixed_text)
+            
+            # Add model metadata to result
+            result["model_name"] = model_name
+            
+            return result
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse single model LLM response: {e}")
+            return {
+                "model_name": model_name,
+                "key_finding": f"The {display_info['display_name']} detected potential signs of manipulation.",
+                "what_model_saw": f"The model analyzed the image but detailed analysis could not be parsed. The fake probability was {prob_fake:.1%}.",
+                "important_regions": ["Unable to identify specific regions."],
+                "confidence_qualifier": "Analysis completed but detailed explanation unavailable due to parsing error."
+            }
+        except Exception as e:
+            logger.error(f"Failed to generate single model explanation: {e}")
+            return None
 
 
 # Global singleton

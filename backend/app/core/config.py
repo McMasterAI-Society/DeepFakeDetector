@@ -12,7 +12,10 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
     # Hugging Face configuration
-    HF_FUSION_REPO_ID: str = "DeepFakeDetector/fusion-majority-test"
+    # Available fusion models:
+    #   - DeepFakeDetector/fusion-logreg (Logistic Regression - default)
+    #   - DeepFakeDetector/fusion-meta-classifier (Meta-classifier)
+    HF_FUSION_REPO_ID: str = "DeepFakeDetector/fusion-logreg"
     HF_CACHE_DIR: str = ".hf_cache"
     HF_TOKEN: Optional[str] = None
     
