@@ -4,8 +4,14 @@ import io
 import os
 import random
 import zipfile
+import requests
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
+
+try:
+    from datasets import load_dataset
+except ImportError:
+    load_dataset = None
 
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -134,6 +140,153 @@ def sample_extract(
 
     return saved, saved_bytes
 
+def _detect_image_col(ds) -> str:
+    # common choices
+    for c in ["image", "img", "jpg", "jpeg", "png", "webp"]:
+        if c in ds.column_names:
+            return c
+    # fallback: first column
+    return ds.column_names[0]
+
+
+def _iter_hf_pil_images(ds, image_col: str):
+    for ex in ds:
+        img = ex.get(image_col)
+        if img is None:
+            continue
+        if isinstance(img, Image.Image):
+            yield img
+            continue
+        # sometimes dict with bytes/path
+        if isinstance(img, dict):
+            b = img.get("bytes")
+            p = img.get("path")
+            try:
+                if b is not None:
+                    im = Image.open(io.BytesIO(b)); im.load()
+                    yield im
+                    continue
+                if p is not None and Path(p).exists():
+                    im = Image.open(p); im.load()
+                    yield im
+                    continue
+            except Exception:
+                continue
+        # path-like fallback
+        try:
+            im = Image.open(img); im.load()
+            yield im
+        except Exception:
+            continue
+
+def _detect_url_col(ds) -> Optional[str]:
+    for c in ds.column_names:
+        if "url" in c.lower():
+            return c
+    return None
+
+
+def open_image_from_url(url: str, timeout: int = 15) -> Optional[Image.Image]:
+    try:
+        r = requests.get(url, timeout=timeout)
+        r.raise_for_status()
+        img = Image.open(io.BytesIO(r.content))
+        img.load()
+        return img
+    except Exception:
+        return None
+    
+def sample_hf_dataset(
+    hf_name: str,
+    out_base: Path,
+    max_train: int,
+    max_test: int,
+    cap_train_mb: Optional[float],
+    cap_test_mb: Optional[float],
+    seed: int,
+) -> None:
+    if load_dataset is None:
+        raise RuntimeError("Missing dependency: pip install datasets huggingface_hub")
+
+    ds_dict = load_dataset(hf_name)
+
+    # pick splits; if no test split, make one from train (deterministic)
+    if "train" in ds_dict and "test" in ds_dict:
+        train_ds = ds_dict["train"]
+        test_ds = ds_dict["test"]
+    elif "train" in ds_dict:
+        split = ds_dict["train"].train_test_split(test_size=0.2, seed=seed)
+        train_ds, test_ds = split["train"], split["test"]
+    else:
+        first = list(ds_dict.keys())[0]
+        split = ds_dict[first].train_test_split(test_size=0.2, seed=seed)
+        train_ds, test_ds = split["train"], split["test"]
+
+    image_col = _detect_image_col(train_ds)
+    url_col = _detect_url_col(train_ds) 
+
+    def _save_split(ds, out_dir: Path, count: int, cap_mb: Optional[float], split_seed: int):
+        ds = ds.shuffle(seed=split_seed)
+        byte_cap = None if cap_mb is None else int(cap_mb * 1024 * 1024)
+        saved = 0
+        saved_bytes = 0
+        KNOWN_IMAGE_COLS = {"image", "img", "jpg", "jpeg", "png", "webp"}
+
+        use_url = (url_col is not None) and (image_col.lower() not in KNOWN_IMAGE_COLS)
+        if use_url:
+            # likely no real image column; fall back to URLs
+            print(f"[HF] {hf_name}: using URL column '{url_col}'")
+            for ex in ds:
+                if saved >= count:
+                    break
+                if byte_cap is not None and saved_bytes >= byte_cap:
+                    break
+
+                url = ex.get(url_col)
+                if not isinstance(url, str) or not url.startswith("http"):
+                    continue
+
+                img = open_image_from_url(url)
+                if img is None:
+                    continue
+
+                jpeg_bytes = encode_jpeg_bytes(img)
+                if byte_cap is not None and saved_bytes + len(jpeg_bytes) > byte_cap:
+                    break
+
+                out_path = out_dir / f"{out_dir.name}_{saved:07d}.jpg"
+                safe_save_bytes(jpeg_bytes, out_path)
+                saved += 1
+                saved_bytes += len(jpeg_bytes)
+        else:
+            print(f"[HF] {hf_name}: using image column '{image_col}'")
+            for img in _iter_hf_pil_images(ds, image_col):
+                if saved >= count:
+                    break
+                if byte_cap is not None and saved_bytes >= byte_cap:
+                    break
+
+                jpeg_bytes = encode_jpeg_bytes(img)
+                if byte_cap is not None and saved_bytes + len(jpeg_bytes) > byte_cap:
+                    break
+
+                out_path = out_dir / f"{out_dir.name}_{saved:07d}.jpg"
+                safe_save_bytes(jpeg_bytes, out_path)
+                saved += 1
+                saved_bytes += len(jpeg_bytes)
+
+        return saved, saved_bytes
+
+    train_dir = out_base / "train"
+    test_dir = out_base / "test"
+
+    sr, br = _save_split(train_ds, train_dir, max_train, cap_train_mb, seed)
+    st, bt = _save_split(test_ds, test_dir, max_test, cap_test_mb, seed + 1)
+
+    print(f"[HF] Train saved: {sr} (~{br/(1024*1024):.1f} MB)")
+    print(f"[HF] Test  saved: {st} (~{bt/(1024*1024):.1f} MB)")
+    print("[HF] Done ->", out_base.resolve())
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -143,7 +296,21 @@ def main() -> int:
     ap.add_argument("--cap-train-mb", type=float, default=None)
     ap.add_argument("--cap-test-mb", type=float, default=None)
     ap.add_argument("--seed", type=int, default=1337)
+    ap.add_argument("--open-images-v7", action="store_true", help="Fetch a small sample from HF dataset bitmind/open-images-v7")
+    
     args = ap.parse_args()
+
+    if args.open_images_v7:
+        sample_hf_dataset(
+            "bitmind/open-images-v7",
+            out_base=Path("datasets/OpenImagesV7"),
+            max_train=args.max_train,
+            max_test=args.max_test,
+            cap_train_mb=args.cap_train_mb,
+            cap_test_mb=args.cap_test_mb,
+            seed=args.seed,
+        )
+
 
     cache_dir = Path(args.modelscope_cache).expanduser().resolve()
     root = find_wildfake_root(cache_dir)
