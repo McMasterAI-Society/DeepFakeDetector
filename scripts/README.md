@@ -46,3 +46,12 @@ du -sh datasets/WildFake`
 
 ## WARNING: WildFake raw is huge
 `rm -rf datasets/_raw/WildFake`
+
+## Open Images v7 (HF) Run - count and size cap
+`python scripts/fetch_sample_datasets.py --open-images-v7 --max-train 30 --max-test 10`
+`python scripts/fetch_sample_datasets.py --open-images-v7 --cap-train-mb 80 --cap-test-mb 20`
+
+## Verify
+`find datasets/OpenImagesV7 -type f -name "*.jpg" | head`
+`find datasets/OpenImagesV7 -type f -name "*.jpg" | wc -l`
+`du -sh datasets/OpenImagesV7`
