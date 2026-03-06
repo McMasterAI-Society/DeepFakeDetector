@@ -1,22 +1,51 @@
-import { motion } from "framer-motion";
-import { ShieldCheck, ShieldAlert, Clock, Bot, CheckCircle2 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ShieldCheck, ShieldAlert, Clock } from "lucide-react";
+import ReasoningPanel from "@/components/ReasoningPanel";
+import type { ModelDisplayInfo, SingleModelInsight } from "@/components/ModelTab";
+
+interface FusionMeta {
+  submodel_weights: Record<string, number>;
+  weighted_contributions: Record<string, number>;
+  contribution_percentages: Record<string, number>;
+}
 
 interface SubmodelResult {
   pred: "real" | "fake";
   pred_int: number;
   prob_fake: number;
+  heatmap_base64?: string;
+  explainability_type?: "grad_cam" | "attention_rollout";
+  focus_summary?: string;
+  contribution_percentage?: number;
 }
 
 interface PredictionResult {
-  final: { pred: "real" | "fake"; pred_int: number; prob_fake: number };
+  final: { 
+    pred: "real" | "fake"; 
+    pred_int: number; 
+    prob_fake: number;
+    heatmap_base64?: string;
+    explainability_type?: "grad_cam" | "attention_rollout";
+    focus_summary?: string;
+  };
   fusion_used: boolean;
   submodels: Record<string, SubmodelResult> | null;
   timing_ms: { total: number; inference?: number; fusion?: number };
+  fusion_meta?: FusionMeta | null;
+  model_display_info?: Record<string, ModelDisplayInfo> | null;
 }
 
 interface ResultsPanelProps {
   result: PredictionResult;
   showSubmodels: boolean;
+  originalFile?: File | null;
+  onRequestInsight: (
+    modelName: string,
+    probFake: number,
+    heatmapBase64?: string,
+    focusSummary?: string,
+    contributionPercentage?: number
+  ) => Promise<SingleModelInsight | null>;
 }
 
 const ConfidenceBar = ({ value, label }: { value: number; label: string }) => (
@@ -38,7 +67,7 @@ const ConfidenceBar = ({ value, label }: { value: number; label: string }) => (
   </div>
 );
 
-const ResultsPanel = ({ result, showSubmodels }: ResultsPanelProps) => {
+const ResultsPanel = ({ result, showSubmodels, originalFile, onRequestInsight }: ResultsPanelProps) => {
   const isFake = result.final.pred === "fake";
   const probFake = result.final.prob_fake;
   const probReal = 1 - probFake;
@@ -90,47 +119,15 @@ const ResultsPanel = ({ result, showSubmodels }: ResultsPanelProps) => {
         <ConfidenceBar value={probReal} label="Likely Real probability" />
       </div>
 
-      {/* Submodels */}
+      {/* Model Reasoning Panel */}
       {showSubmodels && result.submodels && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="rounded-lg border border-border bg-card p-4"
-        >
-          <h3 className="text-sm font-medium text-foreground mb-3">Submodel Results</h3>
-          <div className="space-y-2">
-            {Object.entries(result.submodels).map(([name, sub]) => (
-              <div
-                key={name}
-                className="flex items-center justify-between py-2 px-3 rounded-md bg-muted/30 text-sm"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  {sub.pred === "fake" ? (
-                    <Bot className="w-4 h-4 text-destructive flex-shrink-0" aria-hidden="true" />
-                  ) : (
-                    <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" aria-hidden="true" />
-                  )}
-                  <span className="text-foreground truncate">{name}</span>
-                </div>
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  <span
-                    className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                      sub.pred === "fake"
-                        ? "bg-destructive/15 text-destructive"
-                        : "bg-success/15 text-success"
-                    }`}
-                  >
-                    {sub.pred === "fake" ? "Fake" : "Real"}
-                  </span>
-                  <span className="text-xs text-muted-foreground w-14 text-right">
-                    {(sub.prob_fake * 100).toFixed(1)}%
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </motion.div>
+        <ReasoningPanel
+          submodels={result.submodels}
+          modelDisplayInfo={result.model_display_info || {}}
+          originalImageFile={originalFile}
+          fusionMeta={result.fusion_meta}
+          onRequestInsight={onRequestInsight}
+        />
       )}
 
       {/* Timing */}

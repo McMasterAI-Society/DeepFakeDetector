@@ -10,7 +10,8 @@ Repos:
 - DeepFakeDetector/cnn-transfer
 - DeepFakeDetector/gradfield-cnn
 - DeepFakeDetector/vit-base
-- DeepFakeDetector/fusion-majority-test (TEMP - update to real fusion model later)
+- DeepFakeDetector/fusion-logreg (Logistic Regression fusion)
+- DeepFakeDetector/fusion-meta-classifier (Meta-classifier fusion)
 
 Usage:
     python scripts/fetch_production_models.py
@@ -38,10 +39,17 @@ PRODUCTION_SUBMODELS = [
     "DeepFakeDetector/vit-base",
 ]
 
-# Fusion model repository
-# TODO: Update this to the actual trained fusion model once available
-#       e.g., DeepFakeDetector/fusion-metamodel or DeepFakeDetector/fusion-logreg
-FUSION_MODEL = "DeepFakeDetector/fusion-majority-test"
+# Fusion model repositories
+# Available fusion strategies:
+#   - fusion-logreg: Logistic regression trained on submodel probabilities
+#   - fusion-meta-classifier: Neural network meta-classifier
+FUSION_MODELS = [
+    "DeepFakeDetector/fusion-logreg",
+    "DeepFakeDetector/fusion-meta-classifier",
+]
+
+# Active fusion model to use (set via config or change default here)
+ACTIVE_FUSION_MODEL = "DeepFakeDetector/fusion-logreg"
 
 # Default cache directory (relative to repo root)
 DEFAULT_CACHE_DIR = Path(__file__).parent.parent / "models" / ".hf_cache"
@@ -143,7 +151,7 @@ def main():
     print(f"Force download: {args.force}")
     
     # Determine which repos to download
-    repos = [args.repo] if args.repo else PRODUCTION_SUBMODELS + [FUSION_MODEL]
+    repos = [args.repo] if args.repo else PRODUCTION_SUBMODELS + FUSION_MODELS
     
     print(f"\nRepos to download ({len(repos)}):")
     for repo in repos:

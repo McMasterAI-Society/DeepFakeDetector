@@ -12,9 +12,21 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
     # Hugging Face configuration
-    HF_FUSION_REPO_ID: str = "DeepFakeDetector/fusion-majority-test"
+    # Available fusion models:
+    #   - DeepFakeDetector/fusion-logreg (Logistic Regression - default)
+    #   - DeepFakeDetector/fusion-meta-classifier (Meta-classifier)
+    HF_FUSION_REPO_ID: str = "DeepFakeDetector/fusion-logreg"
     HF_CACHE_DIR: str = ".hf_cache"
     HF_TOKEN: Optional[str] = None
+    
+    # Google Gemini API configuration
+    GOOGLE_API_KEY: Optional[str] = None
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    
+    @property
+    def llm_enabled(self) -> bool:
+        """Check if LLM explanations are available."""
+        return self.GOOGLE_API_KEY is not None and len(self.GOOGLE_API_KEY) > 0
     
     # Application configuration
     ENABLE_DEBUG: bool = False

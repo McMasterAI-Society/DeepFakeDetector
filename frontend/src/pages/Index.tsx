@@ -3,19 +3,51 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ScanSearch, AlertCircle, RotateCcw } from "lucide-react";
 import AppLayout from "@/components/AppLayout";
 import UploadDropzone from "@/components/UploadDropzone";
-import AdvancedOptions, { type AdvancedOptionsState } from "@/components/AdvancedOptions";
 import ResultsPanel from "@/components/ResultsPanel";
 import ResultsSkeleton from "@/components/ResultsSkeleton";
 import AnalyzingOverlay from "@/components/AnalyzingOverlay";
 import { Button } from "@/components/ui/button";
+import type { SingleModelInsight } from "@/components/ModelTab";
 
 type AppState = "idle" | "ready" | "loading" | "success" | "error";
 
+interface ModelDisplayInfo {
+  display_name: string;
+  short_name: string;
+  method_name: string;
+  method_description: string;
+  educational_text: string;
+  what_it_looks_for: string[];
+}
+
+interface FusionMeta {
+  submodel_weights: Record<string, number>;
+  weighted_contributions: Record<string, number>;
+  contribution_percentages: Record<string, number>;
+}
+
 interface PredictionResult {
-  final: { pred: "real" | "fake"; pred_int: number; prob_fake: number };
+  final: { 
+    pred: "real" | "fake"; 
+    pred_int: number; 
+    prob_fake: number;
+    heatmap_base64?: string;
+    explainability_type?: "grad_cam" | "attention_rollout";
+    focus_summary?: string;
+  };
   fusion_used: boolean;
-  submodels: Record<string, { pred: "real" | "fake"; pred_int: number; prob_fake: number }> | null;
+  submodels: Record<string, { 
+    pred: "real" | "fake"; 
+    pred_int: number; 
+    prob_fake: number;
+    heatmap_base64?: string;
+    explainability_type?: "grad_cam" | "attention_rollout";
+    focus_summary?: string;
+    contribution_percentage?: number;
+  }> | null;
   timing_ms: { total: number; inference?: number; fusion?: number };
+  fusion_meta?: FusionMeta | null;
+  model_display_info?: Record<string, ModelDisplayInfo> | null;
 }
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -25,11 +57,6 @@ const Index = () => {
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<PredictionResult | null>(null);
   const [error, setError] = useState<string>("");
-  const [options, setOptions] = useState<AdvancedOptionsState>({
-    useFusion: true,
-    returnSubmodels: true,
-    model: "test-random-a",
-  });
 
   const handleFileSelect = useCallback((f: File | null) => {
     setFile(f);
@@ -51,12 +78,11 @@ const Index = () => {
     setResult(null);
     setError("");
 
+    // Hardcoded options: always use fusion with submodels and explainability
     const params = new URLSearchParams();
-    params.set("use_fusion", String(options.useFusion));
-    params.set("return_submodels", String(options.returnSubmodels));
-    if (!options.useFusion) {
-      params.set("model", options.model);
-    }
+    params.set("use_fusion", "true");
+    params.set("return_submodels", "true");
+    params.set("explain", "true");
 
     const formData = new FormData();
     formData.append("image", file);
@@ -78,7 +104,47 @@ const Index = () => {
       setError(err instanceof Error ? err.message : "An unexpected error occurred.");
       setState("error");
     }
-  }, [file, options]);
+  }, [file]);
+
+  // On-demand AI insight request for a single model
+  const requestModelInsight = useCallback(
+    async (
+      modelName: string,
+      probFake: number,
+      heatmapBase64?: string,
+      focusSummary?: string,
+      contributionPercentage?: number
+    ): Promise<SingleModelInsight | null> => {
+      if (!file || !BASE_URL) return null;
+
+      const formData = new FormData();
+      formData.append("image", file);
+      formData.append("model_name", modelName);
+      formData.append("prob_fake", String(probFake));
+      if (contributionPercentage !== undefined) {
+        formData.append("contribution_percentage", String(contributionPercentage));
+      }
+      if (heatmapBase64) {
+        formData.append("heatmap_base64", heatmapBase64);
+      }
+      if (focusSummary) {
+        formData.append("focus_summary", focusSummary);
+      }
+
+      const res = await fetch(`${BASE_URL}/explain-model`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        throw new Error(`Failed to get insight: ${res.status}`);
+      }
+
+      const data = await res.json();
+      return data.insight as SingleModelInsight;
+    },
+    [file]
+  );
 
   const isLoading = state === "loading";
 
@@ -92,8 +158,6 @@ const Index = () => {
           className="rounded-xl border border-border bg-card p-6 space-y-5 shadow-lg shadow-background/50"
         >
           <UploadDropzone file={file} onFileSelect={handleFileSelect} disabled={isLoading} />
-
-          <AdvancedOptions options={options} onChange={setOptions} disabled={isLoading} />
 
           <Button
             onClick={analyze}
@@ -152,7 +216,12 @@ const Index = () => {
         {/* Results */}
         <AnimatePresence>
           {state === "success" && result && (
-            <ResultsPanel result={result} showSubmodels={options.returnSubmodels} />
+            <ResultsPanel
+              result={result}
+              showSubmodels={true}
+              originalFile={file}
+              onRequestInsight={requestModelInsight}
+            />
           )}
         </AnimatePresence>
       </div>

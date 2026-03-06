@@ -5,7 +5,7 @@ Model registry for managing loaded models.
 import asyncio
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type
 
 from app.core.config import settings
 from app.core.errors import ModelNotFoundError, ModelNotLoadedError, ConfigurationError
@@ -13,9 +13,55 @@ from app.core.logging import get_logger
 from app.models.wrappers.base_wrapper import BaseSubmodelWrapper, BaseFusionWrapper
 from app.models.wrappers.dummy_random_wrapper import DummyRandomWrapper
 from app.models.wrappers.dummy_majority_fusion_wrapper import DummyMajorityFusionWrapper
+# Real production wrappers
+from app.models.wrappers.cnn_transfer_wrapper import CNNTransferWrapper
+from app.models.wrappers.deit_distilled_wrapper import DeiTDistilledWrapper
+from app.models.wrappers.vit_base_wrapper import ViTBaseWrapper
+from app.models.wrappers.gradfield_cnn_wrapper import GradfieldCNNWrapper
 from app.services.hf_hub_service import get_hf_hub_service
 
 logger = get_logger(__name__)
+
+
+def get_wrapper_class(config: Dict[str, Any]) -> Type[BaseSubmodelWrapper]:
+    """
+    Select the appropriate wrapper class based on model config.
+    
+    Uses architecture hints or model_type to dispatch to the correct wrapper.
+    Falls back to DummyRandomWrapper if no match found (useful for testing).
+    
+    Args:
+        config: Model configuration dictionary
+        
+    Returns:
+        Wrapper class (not instance)
+    """
+    # Check various config fields that might indicate model type
+    arch = config.get("arch", "").lower()
+    model_type = config.get("type", "").lower()
+    model_class = config.get("model_class", "").lower()
+    model_name = config.get("model_name", "").lower()
+    library = config.get("library", "").lower()
+    
+    # EfficientNet / CNN Transfer
+    if "efficientnet" in arch or "cnn-transfer" in model_type or "efficientnet" in model_name:
+        return CNNTransferWrapper
+    
+    # DeiT Distilled
+    if "deit" in arch or "deit-distilled" in model_type or "deit" in model_name:
+        return DeiTDistilledWrapper
+    
+    # ViT Base (check vit but not deit)
+    if (("vit" in arch or "vit" in model_name) and "deit" not in arch and "deit" not in model_name) or "vit-base" in model_type:
+        return ViTBaseWrapper
+    
+    # Gradient Field CNN
+    if "gradient" in arch or "gradientnet" in model_class or "gradfield" in model_type or "gradient" in model_name:
+        return GradfieldCNNWrapper
+    
+    # Fallback to dummy wrapper
+    logger.warning(f"No matching wrapper for config, using DummyRandomWrapper: {config}")
+    return DummyRandomWrapper
 
 
 class ModelRegistry:
@@ -99,6 +145,8 @@ class ModelRegistry:
         """
         Download and load a single submodel.
         
+        Uses the config to determine the correct wrapper class.
+        
         Args:
             repo_id: Hugging Face repository ID for the submodel
         """
@@ -112,8 +160,12 @@ class ModelRegistry:
         # Read config
         config = self._read_config(local_path)
         
+        # Select appropriate wrapper class based on config
+        wrapper_class = get_wrapper_class(config)
+        logger.info(f"Using wrapper class {wrapper_class.__name__} for {repo_id}")
+        
         # Create and load wrapper
-        wrapper = DummyRandomWrapper(
+        wrapper = wrapper_class(
             repo_id=repo_id,
             config=config,
             local_path=local_path
