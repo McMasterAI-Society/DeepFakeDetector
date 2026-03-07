@@ -166,6 +166,59 @@ docker run -p 8000:8000 \
   deepfake-detector-api
 ```
 
+## Deployment to Railway
+
+### Prerequisites
+- Railway account (https://railway.app)
+- GitHub repository connected to Railway
+
+### Configuration
+
+1. **Root Directory**: Set to `backend` in Railway service settings
+2. **Required Environment Variables**:
+   ```
+   CORS_ORIGINS=https://www.deepfake-detector.app,https://deepfake-detector.app
+   HF_FUSION_REPO_ID=DeepFakeDetector/fusion-logreg-final
+   HF_CACHE_DIR=.hf_cache
+   PORT=${{RAILWAY_PUBLIC_PORT}}
+   ```
+
+3. **Optional Environment Variables**:
+   ```
+   GOOGLE_API_KEY=your_google_api_key_here
+   HF_TOKEN=your_huggingface_token_here
+   ```
+
+### Deployment Steps
+
+```bash
+# 1. Commit and push changes
+git add backend/
+git commit -m "Update backend for production"
+git push origin main
+
+# 2. Railway will auto-deploy from the railway.toml configuration
+# 3. Check deployment logs in Railway dashboard
+# 4. Verify health endpoint: https://your-app.railway.app/health
+```
+
+### Troubleshooting Railway Deployments
+
+**502 Bad Gateway errors:**
+- Check Railway logs for Python errors
+- Verify all environment variables are set
+- Ensure `requirements.txt` includes all dependencies
+- Check if models are downloading successfully (logs will show HF Hub downloads)
+
+**CORS errors:**
+- Verify `CORS_ORIGINS` environment variable is set
+- Include both `https://www.your-domain.com` and `https://your-domain.com`
+
+**Out of memory:**
+- Railway Hobby tier: 512MB RAM (may struggle with multiple models)
+- Consider using model quantization or upgrading to Pro tier
+- Monitor memory usage in Railway metrics
+
 ## Testing
 
 ```bash

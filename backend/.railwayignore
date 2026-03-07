@@ -1,0 +1,13 @@
+# Files to ignore when deploying to Railway
+.hf_cache/
+*.pyc
+__pycache__/
+.pytest_cache/
+.env
+.env.local
+.venv/
+venv/
+tests/
+testimages/
+*.log
+.DS_Store
