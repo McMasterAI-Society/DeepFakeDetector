@@ -37,8 +37,21 @@ class BaseModelWrapper(ABC):
     
     @property
     def name(self) -> str:
-        """Get the short name of the model (last part of repo_id)."""
-        return self.repo_id.split("/")[-1]
+        """
+        Get the short name of the model.
+        
+        Prefers 'name' from config if available, otherwise derives from repo_id.
+        Strips '-final' suffix to ensure consistency with fusion configs.
+        """
+        # Try to get name from config first
+        config_name = self.config.get("name")
+        if config_name:
+            # Strip -final suffix if present
+            return config_name.replace("-final", "")
+        
+        # Fall back to repo_id last part, strip -final suffix
+        repo_name = self.repo_id.split("/")[-1]
+        return repo_name.replace("-final", "")
     
     @abstractmethod
     def load(self) -> None:

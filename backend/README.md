@@ -52,7 +52,7 @@ The API will be available at `http://localhost:8000`
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `HF_FUSION_REPO_ID` | `DeepFakeDetector/fusion-logreg` | Hugging Face fusion model repo |
+| `HF_FUSION_REPO_ID` | `DeepFakeDetector/fusion-logreg-final` | Hugging Face fusion model repo |
 | `HF_CACHE_DIR` | `.hf_cache` | Local cache directory for HF models |
 | `HF_TOKEN` | `None` | HF API token (for private repos) |
 | `ENABLE_DEBUG` | `false` | Enable debug mode |
@@ -218,16 +218,16 @@ backend/
 ## Hugging Face Model Repositories
 
 ### Fusion Models
-- `DeepFakeDetector/fusion-logreg` - Logistic Regression (default)
-- `DeepFakeDetector/fusion-meta-classifier` - Neural network meta-classifier
+- `DeepFakeDetector/fusion-logreg-final` - Logistic Regression (default)
+- `DeepFakeDetector/fusion-meta-final` - Neural network meta-classifier
 - Each contains: `config.json`, `predict.py`
 - Function: Combines submodel predictions into final verdict
 
 ### Submodels
-- `DeepFakeDetector/cnn-transfer` - EfficientNet-B0 CNN
-- `DeepFakeDetector/vit-base` - Vision Transformer
-- `DeepFakeDetector/deit-distilled` - Data-efficient Image Transformer
-- `DeepFakeDetector/gradfield-cnn` - Gradient field analysis CNN
+- `DeepFakeDetector/cnn-transfer-final` - EfficientNet-B0 CNN
+- `DeepFakeDetector/vit-base-final` - Vision Transformer
+- `DeepFakeDetector/deit-distilled-final` - Data-efficient Image Transformer
+- `DeepFakeDetector/gradfield-cnn-final` - Gradient field analysis CNN
 - Each contains: `config.json`, `model.pt`, `predict.py`
 
 ## Future Milestones

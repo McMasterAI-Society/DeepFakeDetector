@@ -70,12 +70,12 @@ class DeiTDistilledWrapper(BaseSubmodelWrapper):
                 details={"repo_id": self.repo_id}
             )
         
-        weights_path = Path(self.local_path) / "deit_distilled_custom_head.pt"
+        weights_path = Path(self.local_path) / "deit_distilled_final.pt"
         preprocess_path = Path(self.local_path) / "preprocess.json"
         
         if not weights_path.exists():
             raise ConfigurationError(
-                message=f"deit_distilled_custom_head.pt not found in {self.local_path}",
+                message=f"deit_distilled_final.pt not found in {self.local_path}",
                 details={"repo_id": self.repo_id, "expected_path": str(weights_path)}
             )
         

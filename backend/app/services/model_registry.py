@@ -13,6 +13,7 @@ from app.core.logging import get_logger
 from app.models.wrappers.base_wrapper import BaseSubmodelWrapper, BaseFusionWrapper
 from app.models.wrappers.dummy_random_wrapper import DummyRandomWrapper
 from app.models.wrappers.dummy_majority_fusion_wrapper import DummyMajorityFusionWrapper
+from app.models.wrappers.logreg_fusion_wrapper import LogRegFusionWrapper
 # Real production wrappers
 from app.models.wrappers.cnn_transfer_wrapper import CNNTransferWrapper
 from app.models.wrappers.deit_distilled_wrapper import DeiTDistilledWrapper
@@ -62,6 +63,31 @@ def get_wrapper_class(config: Dict[str, Any]) -> Type[BaseSubmodelWrapper]:
     # Fallback to dummy wrapper
     logger.warning(f"No matching wrapper for config, using DummyRandomWrapper: {config}")
     return DummyRandomWrapper
+
+
+def get_fusion_wrapper_class(config: Dict[str, Any]) -> Type[BaseFusionWrapper]:
+    """
+    Select the appropriate fusion wrapper class based on config.
+    
+    Args:
+        config: Fusion model configuration dictionary
+        
+    Returns:
+        Fusion wrapper class (not instance)
+    """
+    fusion_type = config.get("type", "").lower()
+    
+    # Logistic regression stacking fusion
+    if "probability_stacking" in fusion_type or "logreg" in fusion_type:
+        return LogRegFusionWrapper
+    
+    # Majority vote fusion
+    if "majority" in fusion_type:
+        return DummyMajorityFusionWrapper
+    
+    # Default to majority fusion
+    logger.warning(f"Unknown fusion type, using DummyMajorityFusionWrapper: {fusion_type}")
+    return DummyMajorityFusionWrapper
 
 
 class ModelRegistry:
@@ -131,7 +157,9 @@ class ModelRegistry:
                 await self._load_submodel(submodel_repo_id)
             
             # Create and load fusion wrapper
-            self._fusion = DummyMajorityFusionWrapper(
+            fusion_wrapper_class = get_fusion_wrapper_class(fusion_config)
+            logger.info(f"Using fusion wrapper class {fusion_wrapper_class.__name__}")
+            self._fusion = fusion_wrapper_class(
                 repo_id=fusion_repo_id,
                 config=fusion_config,
                 local_path=fusion_path

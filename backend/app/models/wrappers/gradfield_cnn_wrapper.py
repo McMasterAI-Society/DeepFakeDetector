@@ -26,7 +26,7 @@ class CompactGradientNet(nn.Module):
     CNN for gradient field classification with discriminative features.
     
     Input: Luminance image (1-channel)
-    Internal: Computes 5-channel gradient field [Gx, Gy, magnitude, angle, coherence]
+    Internal: Computes 6-channel gradient field [luminance, Gx, Gy, magnitude, angle, coherence]
     Output: Logits and embeddings
     """
     
@@ -47,9 +47,16 @@ class CompactGradientNet(nn.Module):
                                  [1, 4, 6, 4, 1]], dtype=torch.float32) / 256.0
         self.register_buffer('gaussian', gaussian.view(1, 1, 5, 5))
         
+        # Input normalization and channel mixing
+        self.input_norm = nn.BatchNorm2d(6)
+        self.channel_mix = nn.Sequential(
+            nn.Conv2d(6, 6, kernel_size=1),
+            nn.ReLU()
+        )
+        
         # CNN layers
         layers = []
-        in_ch = 5
+        in_ch = 6
         for i in range(depth):
             out_ch = base_filters * (2**i)
             layers.extend([
@@ -68,7 +75,7 @@ class CompactGradientNet(nn.Module):
         self.classifier = nn.Linear(embedding_dim, 1)
     
     def compute_gradient_field(self, luminance):
-        """Compute 5-channel gradient field on GPU."""
+        """Compute 6-channel gradient field on GPU (includes luminance)."""
         G_x = F.conv2d(luminance, self.sobel_x, padding=1)
         G_y = F.conv2d(luminance, self.sobel_y, padding=1)
         
@@ -88,10 +95,12 @@ class CompactGradientNet(nn.Module):
         
         magnitude_scaled = torch.log1p(magnitude * 10)
         
-        return torch.cat([G_x, G_y, magnitude_scaled, angle, coherence], dim=1)
+        return torch.cat([luminance, G_x, G_y, magnitude_scaled, angle, coherence], dim=1)
     
     def forward(self, luminance):
         x = self.compute_gradient_field(luminance)
+        x = self.input_norm(x)
+        x = self.channel_mix(x)
         x = self.cnn(x)
         x = self.global_pool(x).flatten(1)
         emb = self.embedding(x)
@@ -129,7 +138,7 @@ class GradfieldCNNWrapper(BaseSubmodelWrapper):
         """Load the Gradient Field CNN model with trained weights."""
         # Try different weight file names
         weights_path = None
-        for fname in ["gradient_field_cnn_v2.pth", "weights.pt", "model.pth"]:
+        for fname in ["gradient_field_cnn_v3_finetuned.pth", "gradient_field_cnn_v2.pth", "weights.pt", "model.pth"]:
             candidate = Path(self.local_path) / fname
             if candidate.exists():
                 weights_path = candidate

@@ -13,9 +13,9 @@ class Settings(BaseSettings):
     
     # Hugging Face configuration
     # Available fusion models:
-    #   - DeepFakeDetector/fusion-logreg (Logistic Regression - default)
-    #   - DeepFakeDetector/fusion-meta-classifier (Meta-classifier)
-    HF_FUSION_REPO_ID: str = "DeepFakeDetector/fusion-logreg"
+    #   - DeepFakeDetector/fusion-logreg-final (Logistic Regression - default)
+    #   - DeepFakeDetector/fusion-meta-final (Meta-classifier)
+    HF_FUSION_REPO_ID: str = "DeepFakeDetector/fusion-logreg-final"
     HF_CACHE_DIR: str = ".hf_cache"
     HF_TOKEN: Optional[str] = None
     
