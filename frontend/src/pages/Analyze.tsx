@@ -66,7 +66,6 @@ const Analyze = () => {
     setError("");
   }, []);
 
-  // Listen for demo image selections
   useEffect(() => {
     const handler = (e: Event) => {
       const file = (e as CustomEvent).detail as File;
@@ -162,11 +161,11 @@ const Analyze = () => {
 
   return (
     <AppLayout>
-      <div className="max-w-xl mx-auto space-y-6">
+      <div className="max-w-xl mx-auto space-y-6 px-1 sm:px-0">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-xl border border-border bg-card p-6 space-y-5 shadow-sm"
+          className="rounded-xl border border-border bg-card p-4 sm:p-6 space-y-5 shadow-sm"
         >
           <UploadDropzone file={file} onFileSelect={handleFileSelect} disabled={isLoading} />
 
@@ -177,7 +176,7 @@ const Analyze = () => {
             className="w-full gap-2 h-11 text-sm font-semibold"
           >
             <ScanSearch className="w-4 h-4" />
-            {isLoading ? "Analyzing…" : state === "success" ? "Analyze Another Image" : "Analyze Image"}
+            {isLoading ? "Analyzing…" : "Analyze Image"}
           </Button>
         </motion.div>
 
@@ -201,7 +200,7 @@ const Analyze = () => {
               role="alert"
               className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 flex items-start gap-3"
             >
-              <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+              <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" aria-hidden="true" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-foreground font-medium">Analysis failed</p>
                 <p className="text-xs text-muted-foreground mt-1">{error}</p>

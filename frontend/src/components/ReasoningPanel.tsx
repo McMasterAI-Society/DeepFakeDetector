@@ -133,10 +133,10 @@ const ReasoningPanel = ({
   const getTabLabel = (modelName: string): string => {
     const lower = modelName.toLowerCase();
     if (tabLabelMap[lower]) return tabLabelMap[lower];
+    if (lower.includes("gradient")) return "Edge Coherence";
     if (lower.includes("cnn")) return "Texture Analysis";
     if (lower.includes("vit")) return "Patch Consistency";
     if (lower.includes("deit")) return "Global Structure";
-    if (lower.includes("gradient")) return "Edge Coherence";
     return getDisplayInfo(modelName).method_name;
   };
 
