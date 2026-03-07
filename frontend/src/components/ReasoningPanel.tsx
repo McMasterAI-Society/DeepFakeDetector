@@ -67,10 +67,12 @@ const ReasoningPanel = ({
     return undefined;
   }, [originalImageFile]);
 
-  // Filter to only models that agree with the final prediction
-  const modelNames = Object.keys(submodels).filter(
+  // Show models that agree with the final prediction; if none agree, show all
+  const allModelNames = Object.keys(submodels);
+  const agreeingModels = allModelNames.filter(
     (name) => submodels[name].pred === finalPrediction
   );
+  const modelNames = agreeingModels.length > 0 ? agreeingModels : allModelNames;
   const sortedModelNames = fusionMeta?.contribution_percentages
     ? [...modelNames].sort(
         (a, b) =>

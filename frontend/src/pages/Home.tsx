@@ -4,7 +4,7 @@ import { ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import AppLayout from "@/components/AppLayout";
-import logo from "@/assets/logo.ico";
+import logo from "@/assets/logo-new.png";
 import midjourneyLogo from "@/assets/midjourney-logo.png";
 import bingLogo from "@/assets/bing-logo.png";
 import geminiLogo from "@/assets/gemini-logo.png";
