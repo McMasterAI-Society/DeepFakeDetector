@@ -128,6 +128,8 @@ const ReasoningPanel = ({
     "gradient_field": "Edge Coherence",
     "gradient-field-cnn": "Edge Coherence",
     "gradient_field_cnn": "Edge Coherence",
+    "gradfield-cnn": "Edge Coherence",
+    "gradfield_cnn": "Edge Coherence",
   };
 
   const getTabLabel = (modelName: string): string => {

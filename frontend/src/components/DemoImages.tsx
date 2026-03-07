@@ -77,26 +77,36 @@ const demoPrompts: DemoPrompt[] = [
     id: "d006",
     shortLabel: "Deer in Forest",
     prompt: "Create a highly photorealistic wildlife image of a deer standing near the edge of a forest clearing, captured with a 300mm telephoto lens. Natural fur texture with uneven strands, subtle breath condensation in cool air, realistic depth separation from blurred background foliage, accurate shadow falloff.",
+    geminiImage: geminiD006,
+    gpt4oImage: gpt4oD006,
   },
   {
     id: "d007",
     shortLabel: "Garage Workshop",
     prompt: "Create a highly photorealistic interior image of a cluttered garage workshop, concrete floor with oil stains, tools hanging slightly uneven on pegboard, single overhead bulb casting harsh directional shadows, realistic dust in air illuminated by light beam, natural color temperature imbalance.",
+    geminiImage: geminiD007,
+    gpt4oImage: gpt4oD007,
   },
   {
     id: "d008",
     shortLabel: "Ocean Cliff Waves",
     prompt: "Create a highly photorealistic image of ocean waves crashing against a rocky cliff during overcast weather, captured with a 70mm lens. Fine sea spray misting the air, motion blur in water while rocks remain sharp, realistic foam texture variation, muted natural color palette.",
+    geminiImage: geminiD008,
+    gpt4oImage: gpt4oD008,
   },
   {
     id: "d009",
     shortLabel: "Rain Through Windshield",
     prompt: "Create a highly photorealistic image of a city street viewed through a rain-covered car windshield at night, shallow focus on water droplets, distorted bokeh from streetlights, realistic interior dashboard reflection, natural sensor noise in darker areas.",
+    geminiImage: geminiD009,
+    gpt4oImage: gpt4oD009,
   },
   {
     id: "d010",
     shortLabel: "Coffee Mug Close-up",
     prompt: "Create a highly photorealistic close-up of a ceramic coffee mug with visible chips and minor glaze imperfections, sitting on a textured wooden table in morning light. Subtle steam rising with natural diffusion, realistic wood grain detail, accurate light bounce and shadow softness.",
+    geminiImage: geminiD010,
+    gpt4oImage: gpt4oD010,
   },
 ];
 

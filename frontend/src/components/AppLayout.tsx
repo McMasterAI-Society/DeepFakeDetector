@@ -1,7 +1,7 @@
 import { ReactNode } from "react";
 import { motion } from "framer-motion";
 import { Link, useLocation } from "react-router-dom";
-import logo from "@/assets/logo.ico";
+import logo from "@/assets/logo.png";
 import { cn } from "@/lib/utils";
 
 interface AppLayoutProps {

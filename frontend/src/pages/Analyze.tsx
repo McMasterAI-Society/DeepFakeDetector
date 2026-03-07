@@ -180,6 +180,11 @@ const Analyze = () => {
           </Button>
         </motion.div>
 
+        <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 flex items-start gap-2.5 text-xs text-muted-foreground">
+          <AlertCircle className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+          <p>Analysis may be slower than expected due to GPU limits on the current production plan and usage. Thank you for your patience.</p>
+        </div>
+
         <DemoImages onSelectImage={() => {}} />
 
         <AnimatePresence>
