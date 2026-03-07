@@ -29,6 +29,8 @@ interface ReasoningPanelProps {
   originalImageFile?: File | null;
   /** Fusion metadata (if fusion was used) */
   fusionMeta?: FusionMeta | null;
+  /** Final overall prediction to filter agreeing models */
+  finalPrediction: "real" | "fake";
   /** Callback to request AI insight for a model */
   onRequestInsight: (
     modelName: string,
@@ -48,6 +50,7 @@ const ReasoningPanel = ({
   modelDisplayInfo,
   originalImageFile,
   fusionMeta,
+  finalPrediction,
   onRequestInsight,
 }: ReasoningPanelProps) => {
   const [originalImageUrl, setOriginalImageUrl] = useState<string | null>(null);
@@ -64,8 +67,10 @@ const ReasoningPanel = ({
     return undefined;
   }, [originalImageFile]);
 
-  // Sort models by contribution percentage (highest first) if available
-  const modelNames = Object.keys(submodels);
+  // Filter to only models that agree with the final prediction
+  const modelNames = Object.keys(submodels).filter(
+    (name) => submodels[name].pred === finalPrediction
+  );
   const sortedModelNames = fusionMeta?.contribution_percentages
     ? [...modelNames].sort(
         (a, b) =>
@@ -109,6 +114,32 @@ const ReasoningPanel = ({
     );
   };
 
+  // Custom tab labels mapping
+  const tabLabelMap: Record<string, string> = {
+    "cnn-transfer": "Texture Analysis",
+    "cnn_transfer": "Texture Analysis",
+    "vit-patch": "Patch Consistency",
+    "vit_patch": "Patch Consistency",
+    "vit": "Patch Consistency",
+    "deit-distilled": "Global Structure",
+    "deit_distilled": "Global Structure",
+    "deit": "Global Structure",
+    "gradient-field": "Edge Coherence",
+    "gradient_field": "Edge Coherence",
+    "gradient-field-cnn": "Edge Coherence",
+    "gradient_field_cnn": "Edge Coherence",
+  };
+
+  const getTabLabel = (modelName: string): string => {
+    const lower = modelName.toLowerCase();
+    if (tabLabelMap[lower]) return tabLabelMap[lower];
+    if (lower.includes("cnn")) return "Texture Analysis";
+    if (lower.includes("vit")) return "Patch Consistency";
+    if (lower.includes("deit")) return "Global Structure";
+    if (lower.includes("gradient")) return "Edge Coherence";
+    return getDisplayInfo(modelName).method_name;
+  };
+
   // Default to first model
   const defaultTab = sortedModelNames[0] || "";
 
@@ -149,7 +180,7 @@ const ReasoningPanel = ({
                         sub.pred === "fake" ? "bg-destructive" : "bg-success"
                       }`}
                     />
-                    {info.short_name}
+                    {getTabLabel(name)}
                     {contributionPct !== undefined && (
                       <span className="text-[10px] text-muted-foreground">
                         {contributionPct.toFixed(0)}%

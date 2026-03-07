@@ -177,7 +177,7 @@ const Analyze = () => {
             className="w-full gap-2 h-11 text-sm font-semibold"
           >
             <ScanSearch className="w-4 h-4" />
-            {isLoading ? "Analyzing…" : "Analyze Image"}
+            {isLoading ? "Analyzing…" : state === "success" ? "Analyze Another Image" : "Analyze Image"}
           </Button>
         </motion.div>
 

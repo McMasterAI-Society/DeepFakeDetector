@@ -87,11 +87,8 @@ const ModelTab = ({
       {/* Model header with contribution */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
-          <h4 className="text-sm font-semibold text-foreground">
-            {displayInfo.display_name}
-          </h4>
           <p className="text-xs text-muted-foreground">
-            Method: {displayInfo.method_name}
+            Method: {displayInfo.method_description}
           </p>
         </div>
         {contributionPercentage !== undefined && (

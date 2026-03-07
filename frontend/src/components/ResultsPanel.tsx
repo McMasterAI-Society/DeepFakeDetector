@@ -127,6 +127,7 @@ const ResultsPanel = ({ result, showSubmodels, originalFile, onRequestInsight }:
           originalImageFile={originalFile}
           fusionMeta={result.fusion_meta}
           onRequestInsight={onRequestInsight}
+          finalPrediction={result.final.pred}
         />
       )}
 
