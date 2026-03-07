@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     
+    # CORS configuration
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,https://www.deepfake-detector.app,https://deepfake-detector.app"
+    
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse CORS origins from comma-separated string."""
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+    
     # API configuration
     API_V1_PREFIX: str = "/api/v1"
     PROJECT_NAME: str = "DeepFake Detector API"

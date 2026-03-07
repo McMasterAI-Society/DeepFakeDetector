@@ -55,6 +55,8 @@ The API will be available at `http://localhost:8000`
 | `HF_FUSION_REPO_ID` | `DeepFakeDetector/fusion-logreg-final` | Hugging Face fusion model repo |
 | `HF_CACHE_DIR` | `.hf_cache` | Local cache directory for HF models |
 | `HF_TOKEN` | `None` | HF API token (for private repos) |
+| `GOOGLE_API_KEY` | `None` | Google Gemini API key (for LLM explanations) |
+| `CORS_ORIGINS` | `http://localhost:5173,...` | Comma-separated allowed CORS origins |
 | `ENABLE_DEBUG` | `false` | Enable debug mode |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `HOST` | `0.0.0.0` | Server host |
@@ -67,8 +69,9 @@ Available fusion models:
 Create a `.env` file in the backend directory to set these:
 
 ```env
-HF_FUSION_REPO_ID=DeepFakeDetector/fusion-logreg
+HF_FUSION_REPO_ID=DeepFakeDetector/fusion-logreg-final
 HF_CACHE_DIR=.hf_cache
+CORS_ORIGINS=http://localhost:5173,https://www.deepfake-detector.app
 ENABLE_DEBUG=true
 LOG_LEVEL=DEBUG
 ```
