@@ -2,9 +2,11 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "python -m app.main"
+startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT --log-level info"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
 restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 3
+restartPolicyMaxRetries = 5
 
 [build.env]
 NIXPACKS_PYTHON_VERSION = "3.11"
