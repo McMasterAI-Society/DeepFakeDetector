@@ -10,6 +10,11 @@ import geminiD002 from "@/assets/demo/gemini-d002.jpg";
 import geminiD003 from "@/assets/demo/gemini-d003.jpg";
 import geminiD004 from "@/assets/demo/gemini-d004.jpg";
 import geminiD005 from "@/assets/demo/gemini-d005.jpg";
+import geminiD006 from "@/assets/demo/gemini-d006.jpg";
+import geminiD007 from "@/assets/demo/gemini-d007.jpg";
+import geminiD008 from "@/assets/demo/gemini-d008.jpg";
+import geminiD009 from "@/assets/demo/gemini-d009.jpg";
+import geminiD010 from "@/assets/demo/gemini-d010.jpg";
 
 // GPT-4o images
 import gpt4oD001 from "@/assets/demo/gpt4o-d001.png";
@@ -17,6 +22,11 @@ import gpt4oD002 from "@/assets/demo/gpt4o-d002.png";
 import gpt4oD003 from "@/assets/demo/gpt4o-d003.png";
 import gpt4oD004 from "@/assets/demo/gpt4o-d004.png";
 import gpt4oD005 from "@/assets/demo/gpt4o-d005.png";
+import gpt4oD006 from "@/assets/demo/gpt4o-d006.png";
+import gpt4oD007 from "@/assets/demo/gpt4o-d007.png";
+import gpt4oD008 from "@/assets/demo/gpt4o-d008.png";
+import gpt4oD009 from "@/assets/demo/gpt4o-d009.png";
+import gpt4oD010 from "@/assets/demo/gpt4o-d010.png";
 
 interface DemoPrompt {
   id: string;
