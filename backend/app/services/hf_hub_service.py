@@ -15,6 +15,9 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Disable symlink warnings on Windows
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
 
 class HFHubService:
     """
@@ -66,10 +69,14 @@ class HFHubService:
         logger.info(f"Downloading repo: {repo_id} (revision={revision}, force={force_download})")
         
         try:
+            # Use local_dir instead of cache_dir to avoid symlink issues on Windows
+            repo_name = repo_id.replace("/", "--")
+            local_dir = Path(self.cache_dir) / repo_name
+            
             local_path = snapshot_download(
                 repo_id=repo_id,
                 revision=revision or "main",
-                cache_dir=self.cache_dir,
+                local_dir=str(local_dir),
                 token=self.token,
                 force_download=force_download,
                 local_files_only=False
@@ -101,16 +108,13 @@ class HFHubService:
         Returns:
             Local path if cached, None otherwise
         """
-        try:
-            # Try to get from cache without downloading
-            local_path = snapshot_download(
-                repo_id=repo_id,
-                cache_dir=self.cache_dir,
-                local_files_only=True
-            )
-            return local_path
-        except Exception:
-            return None
+        # Check local_dir path format (used to avoid symlinks on Windows)
+        repo_name = repo_id.replace("/", "--")
+        local_dir = Path(self.cache_dir) / repo_name
+        
+        if local_dir.exists() and any(local_dir.iterdir()):
+            return str(local_dir)
+        return None
     
     def is_cached(self, repo_id: str) -> bool:
         """

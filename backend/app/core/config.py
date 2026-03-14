@@ -12,9 +12,21 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
     # Hugging Face configuration
-    HF_FUSION_REPO_ID: str = "DeepFakeDetector/fusion-majority-test"
+    # Available fusion models:
+    #   - DeepFakeDetector/fusion-logreg-final (Logistic Regression - default)
+    #   - DeepFakeDetector/fusion-meta-final (Meta-classifier)
+    HF_FUSION_REPO_ID: str = "DeepFakeDetector/fusion-logreg-final"
     HF_CACHE_DIR: str = ".hf_cache"
     HF_TOKEN: Optional[str] = None
+    
+    # Google Gemini API configuration
+    GOOGLE_API_KEY: Optional[str] = None
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    
+    @property
+    def llm_enabled(self) -> bool:
+        """Check if LLM explanations are available."""
+        return self.GOOGLE_API_KEY is not None and len(self.GOOGLE_API_KEY) > 0
     
     # Application configuration
     ENABLE_DEBUG: bool = False
@@ -23,6 +35,14 @@ class Settings(BaseSettings):
     # Server configuration
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    
+    # CORS configuration
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,https://www.deepfake-detector.app,https://deepfake-detector.app"
+    
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse CORS origins from comma-separated string."""
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
     
     # API configuration
     API_V1_PREFIX: str = "/api/v1"

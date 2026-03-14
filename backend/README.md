@@ -2,15 +2,12 @@
 
 FastAPI backend for detecting AI-generated (deepfake) images.
 
-## Milestone 1: Hugging Face Hosted Dummy Models
+## Features
 
-This initial milestone implements the API infrastructure using dummy random models hosted on Hugging Face for testing purposes.
-
-### Features
-
-- **Fusion prediction**: Combines multiple model predictions using majority vote
-- **Individual model prediction**: Run specific submodels directly  
-- **Timing information**: Detailed performance metrics for each request
+- **Multi-model ensemble**: CNN, ViT, DeiT, and GradField models
+- **Fusion prediction**: Combines submodel predictions using Logistic Regression or Meta-classifier
+- **Explainability**: Grad-CAM and Attention Rollout heatmaps
+- **LLM Insights**: Optional AI-powered interpretation of model evidence (Google Gemini)
 - **Hugging Face integration**: Models downloaded and cached automatically
 
 ## Quick Start
@@ -55,19 +52,26 @@ The API will be available at `http://localhost:8000`
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `HF_FUSION_REPO_ID` | `DeepFakeDetector/fusion-majority-test` | Hugging Face fusion model repo |
+| `HF_FUSION_REPO_ID` | `DeepFakeDetector/fusion-logreg-final` | Hugging Face fusion model repo |
 | `HF_CACHE_DIR` | `.hf_cache` | Local cache directory for HF models |
 | `HF_TOKEN` | `None` | HF API token (for private repos) |
+| `GOOGLE_API_KEY` | `None` | Google Gemini API key (for LLM explanations) |
+| `CORS_ORIGINS` | `http://localhost:5173,...` | Comma-separated allowed CORS origins |
 | `ENABLE_DEBUG` | `false` | Enable debug mode |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `HOST` | `0.0.0.0` | Server host |
 | `PORT` | `8000` | Server port |
 
+Available fusion models:
+- `DeepFakeDetector/fusion-logreg` - Logistic Regression (default)
+- `DeepFakeDetector/fusion-meta-classifier` - Neural network meta-classifier
+
 Create a `.env` file in the backend directory to set these:
 
 ```env
-HF_FUSION_REPO_ID=DeepFakeDetector/fusion-majority-test
+HF_FUSION_REPO_ID=DeepFakeDetector/fusion-logreg-final
 HF_CACHE_DIR=.hf_cache
+CORS_ORIGINS=http://localhost:5173,https://www.deepfake-detector.app
 ENABLE_DEBUG=true
 LOG_LEVEL=DEBUG
 ```
@@ -149,7 +153,7 @@ docker run -p 8000:8000 deepfake-detector-api
 
 ```bash
 docker run -p 8000:8000 \
-  -e HF_FUSION_REPO_ID=DeepFakeDetector/fusion-majority-test \
+  -e HF_FUSION_REPO_ID=DeepFakeDetector/fusion-logreg \
   -e LOG_LEVEL=DEBUG \
   deepfake-detector-api
 ```
@@ -161,6 +165,59 @@ docker run -p 8000:8000 \
   -v $(pwd)/.hf_cache:/app/.hf_cache \
   deepfake-detector-api
 ```
+
+## Deployment to Railway
+
+### Prerequisites
+- Railway account (https://railway.app)
+- GitHub repository connected to Railway
+
+### Configuration
+
+1. **Root Directory**: Set to `backend` in Railway service settings
+2. **Required Environment Variables**:
+   ```
+   CORS_ORIGINS=https://www.deepfake-detector.app,https://deepfake-detector.app
+   HF_FUSION_REPO_ID=DeepFakeDetector/fusion-logreg-final
+   HF_CACHE_DIR=.hf_cache
+   PORT=${{RAILWAY_PUBLIC_PORT}}
+   ```
+
+3. **Optional Environment Variables**:
+   ```
+   GOOGLE_API_KEY=your_google_api_key_here
+   HF_TOKEN=your_huggingface_token_here
+   ```
+
+### Deployment Steps
+
+```bash
+# 1. Commit and push changes
+git add backend/
+git commit -m "Update backend for production"
+git push origin main
+
+# 2. Railway will auto-deploy from the railway.toml configuration
+# 3. Check deployment logs in Railway dashboard
+# 4. Verify health endpoint: https://your-app.railway.app/health
+```
+
+### Troubleshooting Railway Deployments
+
+**502 Bad Gateway errors:**
+- Check Railway logs for Python errors
+- Verify all environment variables are set
+- Ensure `requirements.txt` includes all dependencies
+- Check if models are downloading successfully (logs will show HF Hub downloads)
+
+**CORS errors:**
+- Verify `CORS_ORIGINS` environment variable is set
+- Include both `https://www.your-domain.com` and `https://your-domain.com`
+
+**Out of memory:**
+- Railway Hobby tier: 512MB RAM (may struggle with multiple models)
+- Consider using model quantization or upgrading to Pro tier
+- Monitor memory usage in Railway metrics
 
 ## Testing
 
@@ -216,22 +273,23 @@ backend/
 
 ## Hugging Face Model Repositories
 
-### Fusion Model
-- Repository: `DeepFakeDetector/fusion-majority-test`
-- Contains: `config.json`, `fusion.py`
-- Function: Majority vote across submodels
+### Fusion Models
+- `DeepFakeDetector/fusion-logreg-final` - Logistic Regression (default)
+- `DeepFakeDetector/fusion-meta-final` - Neural network meta-classifier
+- Each contains: `config.json`, `predict.py`
+- Function: Combines submodel predictions into final verdict
 
 ### Submodels
-- `DeepFakeDetector/test-random-a`
-- `DeepFakeDetector/test-random-b`  
-- `DeepFakeDetector/test-random-c`
-- Each contains: `config.json`, `predict.py`
-- Function: Random 0/1 prediction (for testing)
+- `DeepFakeDetector/cnn-transfer-final` - EfficientNet-B0 CNN
+- `DeepFakeDetector/vit-base-final` - Vision Transformer
+- `DeepFakeDetector/deit-distilled-final` - Data-efficient Image Transformer
+- `DeepFakeDetector/gradfield-cnn-final` - Gradient field analysis CNN
+- Each contains: `config.json`, `model.pt`, `predict.py`
 
 ## Future Milestones
 
-- **Milestone 2**: Real CNN/ViT models for deepfake detection
-- **Milestone 3**: Explainability endpoints
+- **Milestone 2**: Real CNN/ViT models for deepfake detection ✓
+- **Milestone 3**: Explainability endpoints ✓
 - **Milestone 4**: Production optimizations
 
 ## License
