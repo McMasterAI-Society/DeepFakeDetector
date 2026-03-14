@@ -1,0 +1,21 @@
+{
+  "type": "probability_stacking_fusion",
+  "name": "fusion-logreg",
+  "version": "1.0.0",
+  "submodels": [
+    "DeepFakeDetector/cnn-transfer",
+    "DeepFakeDetector/vit-base",
+    "DeepFakeDetector/gradfield-cnn"
+  ],
+  "submodel_order": [
+    "cnn-transfer",
+    "vit-base",
+    "gradfield-cnn"
+  ],
+  "num_submodels": 3,
+  "threshold": 0.5,
+  "labels": {
+    "0": "real",
+    "1": "fake"
+  }
+}
