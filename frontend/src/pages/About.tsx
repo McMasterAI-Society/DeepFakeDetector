@@ -10,6 +10,7 @@ import orianaImg from "@/assets/team/oriana.png";
 import andrewImg from "@/assets/team/andrew.png";
 import vihaanImg from "@/assets/team/vihaan.png";
 import alifImg from "@/assets/team/alif.png";
+import cucaiPaperPdf from "@/assets/papers/DeepFake-Detector-CUCAI-Submission.pdf";
 
 const teamMembers = [
   {
@@ -80,7 +81,7 @@ const links = [
   },
   {
     label: "CUCAI 2026 Paper",
-    url: "https://cucai.ca/",
+    url: cucaiPaperPdf,
     icon: BookOpen,
   },
   {
@@ -195,7 +196,7 @@ const About = () => {
           aria-labelledby="cucai-heading"
         >
           <h3 id="cucai-heading" className="text-2xl font-semibold text-foreground">
-            <a href="https://cucai.ca/" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm">
+            <a href={cucaiPaperPdf} target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm">
               CUCAI 2026
             </a>
           </h3>
