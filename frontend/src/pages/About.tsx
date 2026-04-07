@@ -10,7 +10,8 @@ import orianaImg from "@/assets/team/oriana.png";
 import andrewImg from "@/assets/team/andrew.png";
 import vihaanImg from "@/assets/team/vihaan.png";
 import alifImg from "@/assets/team/alif.png";
-import cucaiPaperPdf from "@/assets/papers/DeepFake-Detector-CUCAI-Submission.pdf";
+
+const cucaiPaperPdf = "/papers/DeepFake-Detector-CUCAI-Submission.pdf";
 
 const teamMembers = [
   {
