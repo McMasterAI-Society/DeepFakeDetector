@@ -69,6 +69,11 @@ class HFHubService:
         logger.info(f"Downloading repo: {repo_id} (revision={revision}, force={force_download})")
         
         try:
+            cached_path = self.get_cached_path(repo_id)
+            if cached_path and not force_download:
+                logger.info(f"Using cached repo for {repo_id}: {cached_path}")
+                return cached_path
+
             # Use local_dir instead of cache_dir to avoid symlink issues on Windows
             repo_name = repo_id.replace("/", "--")
             local_dir = Path(self.cache_dir) / repo_name

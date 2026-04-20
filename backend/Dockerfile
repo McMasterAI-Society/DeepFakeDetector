@@ -11,7 +11,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PORT=7860
+    PORT=7860 \
+    HF_CACHE_DIR=/app/.hf_cache
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -30,8 +31,9 @@ ENV PATH="/home/user/.local/bin:$PATH"
 COPY --chown=user:user requirements.txt .
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-# Copy application code
-COPY --chown=user:user . /app
+# Copy only files required for model prefetch first.
+COPY --chown=user:user app /app/app
+COPY --chown=user:user start.sh /app/start.sh
 
 # Switch to root to create cache directory and set permissions
 USER root
@@ -39,6 +41,12 @@ RUN mkdir -p /app/.hf_cache && chown -R user:user /app/.hf_cache && chmod +x /ap
 
 # Switch back to user
 USER user
+
+# Prefetch model artifacts at build time so startup does not wait on model downloads.
+RUN python -m app.scripts.prefetch_models
+
+# Copy full project contents after prefetch so docs/tests edits do not invalidate prefetch layers.
+COPY --chown=user:user . /app
 
 # Expose default app port
 EXPOSE 7860
