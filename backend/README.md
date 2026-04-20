@@ -1,296 +1,165 @@
+---
+title: DeepFake Detector API
+emoji: 🎭
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # DeepFake Detector Backend
 
-FastAPI backend for detecting AI-generated (deepfake) images.
+FastAPI backend for detecting AI-generated (deepfake) images using a multi-model fusion pipeline.
 
 ## Features
 
-- **Multi-model ensemble**: CNN, ViT, DeiT, and GradField models
-- **Fusion prediction**: Combines submodel predictions using Logistic Regression or Meta-classifier
-- **Explainability**: Grad-CAM and Attention Rollout heatmaps
-- **LLM Insights**: Optional AI-powered interpretation of model evidence (Google Gemini)
-- **Hugging Face integration**: Models downloaded and cached automatically
+- Multi-model ensemble: CNN Transfer, ViT Base, DeiT Distilled, Gradient Field CNN
+- Fusion prediction: Logistic Regression and meta-classifier variants
+- Explainability: Grad-CAM and attention-based heatmaps
+- Optional Gemini-powered interpretation layer
+- Hugging Face Hub model download/caching
 
-## Quick Start
-
-### Prerequisites
+## Prerequisites
 
 - Python 3.11+
 - pip
 
-### Installation
+## Quick Start (Local)
 
 ```bash
-# Navigate to backend directory
 cd backend
 
-# Create virtual environment (recommended)
+# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate  # Windows PowerShell: .\\venv\\Scripts\\Activate.ps1
 
 # Install dependencies
 pip install -r requirements.txt
-```
 
-### Running Locally
+# Configure env
+cp .env.example .env  # Windows PowerShell: Copy-Item .env.example .env
 
-```bash
-# From backend directory
+# Run API
 uvicorn app.main:app --reload
-
-# Or run directly
-python -m app.main
 ```
 
-The API will be available at `http://localhost:8000`
+API docs:
 
-### API Documentation
+- `http://localhost:8000/docs`
+- `http://localhost:8000/redoc`
 
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+## Environment Configuration
 
-## Environment Variables
+Use [backend/.env.example](.env.example) as the source of truth.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `HF_FUSION_REPO_ID` | `DeepFakeDetector/fusion-logreg-final` | Hugging Face fusion model repo |
-| `HF_CACHE_DIR` | `.hf_cache` | Local cache directory for HF models |
-| `HF_TOKEN` | `None` | HF API token (for private repos) |
-| `GOOGLE_API_KEY` | `None` | Google Gemini API key (for LLM explanations) |
-| `CORS_ORIGINS` | `http://localhost:5173,...` | Comma-separated allowed CORS origins |
-| `ENABLE_DEBUG` | `false` | Enable debug mode |
-| `LOG_LEVEL` | `INFO` | Logging level |
-| `HOST` | `0.0.0.0` | Server host |
-| `PORT` | `8000` | Server port |
+Common runtime variables:
 
-Available fusion models:
-- `DeepFakeDetector/fusion-logreg` - Logistic Regression (default)
-- `DeepFakeDetector/fusion-meta-classifier` - Neural network meta-classifier
+- `HF_FUSION_REPO_ID` (default: `DeepFakeDetector/fusion-logreg-final`)
+- `HF_CACHE_DIR` (default: `.hf_cache`)
+- `HF_TOKEN` (optional; required for private model repos or non-interactive HF auth)
+- `GOOGLE_API_KEY` (optional; required for Gemini explanations)
+- `HOST` (default: `0.0.0.0`)
+- `PORT` (default: `8000` locally, `7860` in Space by default)
+- `CORS_ORIGINS` (comma-separated origins)
+- `ENABLE_DEBUG`, `LOG_LEVEL`
 
-Create a `.env` file in the backend directory to set these:
+HF Spaces deploy variables (used by [backend/deploy-to-hf.sh](deploy-to-hf.sh)):
 
-```env
-HF_FUSION_REPO_ID=DeepFakeDetector/fusion-logreg-final
-HF_CACHE_DIR=.hf_cache
-CORS_ORIGINS=http://localhost:5173,https://www.deepfake-detector.app
-ENABLE_DEBUG=true
-LOG_LEVEL=DEBUG
-```
+- `HF_SPACE_URL`
+- `HF_SPACE_WEB_URL`
+- `HF_SPACE_APP_URL`
+- `HF_DEPLOY_DIR`
 
 ## API Endpoints
 
-### Health & Status
+- `GET /health` - service health
+- `GET /ready` - readiness (includes model load state)
+- `GET /models` - loaded model metadata
+- `POST /predict` - real/fake prediction
+- `GET /docs` - Swagger UI
+
+Example:
 
 ```bash
-# Health check
-curl http://localhost:8000/health
-
-# Readiness check (verifies models are loaded)
-curl http://localhost:8000/ready
-```
-
-### List Models
-
-```bash
-curl http://localhost:8000/models
-```
-
-### Predict
-
-```bash
-# Using fusion (default) - combines all submodel predictions
-curl -X POST http://localhost:8000/predict \
+curl -X POST "http://localhost:8000/predict" \
   -F "image=@/path/to/image.jpg"
-
-# Using fusion without submodel details in response
-curl -X POST "http://localhost:8000/predict?return_submodels=false" \
-  -F "image=@/path/to/image.jpg"
-
-# Using a specific submodel (no fusion)
-curl -X POST "http://localhost:8000/predict?use_fusion=false&model=test-random-a" \
-  -F "image=@/path/to/image.jpg"
-```
-
-### Example Response
-
-```json
-{
-  "final": {
-    "pred": "fake",
-    "pred_int": 1,
-    "prob_fake": 0.6667
-  },
-  "fusion_used": true,
-  "submodels": {
-    "test-random-a": {"pred": "real", "pred_int": 0, "prob_fake": 0.0},
-    "test-random-b": {"pred": "fake", "pred_int": 1, "prob_fake": 1.0},
-    "test-random-c": {"pred": "fake", "pred_int": 1, "prob_fake": 1.0}
-  },
-  "timing_ms": {
-    "total": 7,
-    "download": 1,
-    "preprocess": 0,
-    "inference": 2,
-    "fusion": 0
-  }
-}
 ```
 
 ## Docker
 
-### Build
+Build and run locally:
 
 ```bash
 docker build -t deepfake-detector-api .
+docker run -p 7860:7860 deepfake-detector-api
 ```
 
-### Run
+## Deploy to Hugging Face Spaces
+
+Recommended path is the Bash deploy script.
+
+1. Configure [backend/.env](.env) from [backend/.env.example](.env.example)
+2. Ensure `HF_SPACE_URL` and related deploy variables are set
+3. Run from backend folder:
 
 ```bash
-docker run -p 8000:8000 deepfake-detector-api
+bash ./deploy-to-hf.sh
 ```
 
-### With Environment Variables
+Or run from repo root:
 
 ```bash
-docker run -p 8000:8000 \
-  -e HF_FUSION_REPO_ID=DeepFakeDetector/fusion-logreg \
-  -e LOG_LEVEL=DEBUG \
-  deepfake-detector-api
+bash ./backend/deploy-to-hf.sh
 ```
 
-### With Volume for Cache Persistence
+The script will:
 
-```bash
-docker run -p 8000:8000 \
-  -v $(pwd)/.hf_cache:/app/.hf_cache \
-  deepfake-detector-api
-```
+- install Hugging Face CLI if needed
+- prompt/authenticate with HF (`hf auth login`) when required
+- clone Space repo into a separate temp deploy directory
+- copy backend files as-is (single `Dockerfile` setup)
+- commit and push to the HF Space
 
-## Deployment to Railway
+After deploy, set Space secrets in Hugging Face:
 
-### Prerequisites
-- Railway account (https://railway.app)
-- GitHub repository connected to Railway
+- `GOOGLE_API_KEY` (if using explanation endpoints)
+- `CORS_ORIGINS` (frontend domains)
 
-### Configuration
+## Deploy to Railway
 
-1. **Root Directory**: Set to `backend` in Railway service settings
-2. **Required Environment Variables**:
-   ```
-   CORS_ORIGINS=https://www.deepfake-detector.app,https://deepfake-detector.app
-   HF_FUSION_REPO_ID=DeepFakeDetector/fusion-logreg-final
-   HF_CACHE_DIR=.hf_cache
-   PORT=${{RAILWAY_PUBLIC_PORT}}
-   ```
+- Set service root to `backend`
+- Configure required env vars (`CORS_ORIGINS`, `HF_FUSION_REPO_ID`, `HF_CACHE_DIR`, `PORT`)
+- Push to main branch to trigger deployment
 
-3. **Optional Environment Variables**:
-   ```
-   GOOGLE_API_KEY=your_google_api_key_here
-   HF_TOKEN=your_huggingface_token_here
-   ```
+## Troubleshooting
 
-### Deployment Steps
-
-```bash
-# 1. Commit and push changes
-git add backend/
-git commit -m "Update backend for production"
-git push origin main
-
-# 2. Railway will auto-deploy from the railway.toml configuration
-# 3. Check deployment logs in Railway dashboard
-# 4. Verify health endpoint: https://your-app.railway.app/health
-```
-
-### Troubleshooting Railway Deployments
-
-**502 Bad Gateway errors:**
-- Check Railway logs for Python errors
-- Verify all environment variables are set
-- Ensure `requirements.txt` includes all dependencies
-- Check if models are downloading successfully (logs will show HF Hub downloads)
-
-**CORS errors:**
-- Verify `CORS_ORIGINS` environment variable is set
-- Include both `https://www.your-domain.com` and `https://your-domain.com`
-
-**Out of memory:**
-- Railway Hobby tier: 512MB RAM (may struggle with multiple models)
-- Consider using model quantization or upgrading to Pro tier
-- Monitor memory usage in Railway metrics
-
-## Testing
-
-```bash
-# Run all tests
-pytest
-
-# Run with verbose output
-pytest -v
-
-# Run specific test file
-pytest tests/test_api.py -v
-```
+- Build fails: inspect Space/Railway logs first
+- HF auth fails: run `hf auth login` and/or set `HF_TOKEN` in `.env`
+- Model loading issues: verify fusion/submodel repo IDs and access
+- CORS issues: ensure frontend domains are in `CORS_ORIGINS`
 
 ## Project Structure
 
-```
+```text
 backend/
 ├── app/
-│   ├── main.py              # FastAPI application entry point
-│   ├── api/                  # API route handlers
-│   │   ├── routes_health.py  # /health, /ready endpoints
-│   │   ├── routes_models.py  # /models endpoint
-│   │   └── routes_predict.py # /predict endpoint
-│   ├── core/                 # Core configuration
-│   │   ├── config.py         # Settings and env vars
-│   │   ├── errors.py         # Custom exceptions
-│   │   └── logging.py        # Logging setup
-│   ├── schemas/              # Pydantic models
-│   │   ├── predict.py        # Prediction schemas
-│   │   └── models.py         # Model info schemas
-│   ├── services/             # Business logic
-│   │   ├── hf_hub_service.py # HuggingFace Hub downloads
-│   │   ├── model_registry.py # Model loading & management
-│   │   ├── preprocess_service.py # Image preprocessing
-│   │   ├── inference_service.py  # Model inference
-│   │   ├── fusion_service.py     # Fusion predictions
-│   │   └── cache_service.py      # Caching (placeholder)
-│   ├── models/
-│   │   └── wrappers/         # Model wrapper classes
-│   │       ├── base_wrapper.py
-│   │       ├── dummy_random_wrapper.py
-│   │       └── dummy_majority_fusion_wrapper.py
-│   └── utils/                # Utilities
-│       ├── image.py          # Image processing
-│       ├── timing.py         # Performance timing
-│       └── security.py       # Security utilities
-├── tests/                    # Test suite
+├── tests/
 ├── Dockerfile
+├── deploy-to-hf.sh
+├── deploy-to-hf.ps1
 ├── requirements.txt
 └── README.md
 ```
 
-## Hugging Face Model Repositories
+## License
 
-### Fusion Models
-- `DeepFakeDetector/fusion-logreg-final` - Logistic Regression (default)
-- `DeepFakeDetector/fusion-meta-final` - Neural network meta-classifier
-- Each contains: `config.json`, `predict.py`
-- Function: Combines submodel predictions into final verdict
-
-### Submodels
-- `DeepFakeDetector/cnn-transfer-final` - EfficientNet-B0 CNN
-- `DeepFakeDetector/vit-base-final` - Vision Transformer
-- `DeepFakeDetector/deit-distilled-final` - Data-efficient Image Transformer
-- `DeepFakeDetector/gradfield-cnn-final` - Gradient field analysis CNN
-- Each contains: `config.json`, `model.pt`, `predict.py`
-
-## Future Milestones
-
-- **Milestone 2**: Real CNN/ViT models for deepfake detection ✓
-- **Milestone 3**: Explainability endpoints ✓
-- **Milestone 4**: Production optimizations
+MIT
+├── deploy-to-hf.sh
+├── deploy-to-hf.ps1
+├── requirements.txt
+└── README.md
+```
 
 ## License
 

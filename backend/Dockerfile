@@ -1,4 +1,6 @@
 # DeepFake Detector API - Docker Image
+# Unified Dockerfile for local, Railway, and HF Spaces
+
 FROM python:3.11-slim
 
 # Set working directory
@@ -8,39 +10,38 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PORT=7860
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# Create non-root user (HF Spaces requirement)
+RUN useradd -m -u 1000 user
+USER user
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Set PATH for user-installed packages
+ENV PATH="/home/user/.local/bin:$PATH"
+
+# Copy requirements and install dependencies as user
+COPY --chown=user:user requirements.txt .
+RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
 # Copy application code
-COPY . .
+COPY --chown=user:user . /app
 
-# Create cache directory for Hugging Face models
-RUN mkdir -p .hf_cache
+# Switch to root to create cache directory and set permissions
+USER root
+RUN mkdir -p /app/.hf_cache && chown -R user:user /app/.hf_cache && chmod +x /app/start.sh
 
-# Make startup script executable
-RUN chmod +x start.sh
+# Switch back to user
+USER user
 
-# Create non-root user for security
-RUN useradd --create-home --shell /bin/bash appuser \
-    && chown -R appuser:appuser /app
-USER appuser
+# Expose default app port
+EXPOSE 7860
 
-# Expose port (Railway will set PORT env var)
-EXPOSE 8000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
-
-# Run startup script
+# Run the application (start.sh uses PORT env var)
 CMD ["./start.sh"]
