@@ -12,5 +12,10 @@ fi
 # Use PORT from env, .env file, or default to 7860
 PORT=${PORT:-7860}
 
+# Ensure OpenMP thread count is a valid integer to avoid libgomp warnings.
+if ! [[ "${OMP_NUM_THREADS:-}" =~ ^[0-9]+$ ]]; then
+    export OMP_NUM_THREADS=1
+fi
+
 echo "Starting uvicorn on port $PORT"
 exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --log-level info

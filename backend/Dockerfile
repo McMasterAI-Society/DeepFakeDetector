@@ -48,6 +48,11 @@ RUN python -m app.scripts.prefetch_models
 # Copy full project contents after prefetch so docs/tests edits do not invalidate prefetch layers.
 COPY --chown=user:user . /app
 
+# Final copy can strip executable mode from scripts on Windows hosts; re-apply execute bit.
+USER root
+RUN chmod +x /app/start.sh
+USER user
+
 # Expose default app port
 EXPOSE 7860
 
