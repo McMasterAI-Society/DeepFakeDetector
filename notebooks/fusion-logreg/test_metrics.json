@@ -1,0 +1,11 @@
+{
+  "accuracy": 0.9375,
+  "auroc": 0.9596448748991121,
+  "f1": 0.957983193277311,
+  "model_type": "Logistic Regression Fusion",
+  "submodel_order": [
+    "cnn-transfer",
+    "vit-base",
+    "gradfield-cnn"
+  ]
+}
