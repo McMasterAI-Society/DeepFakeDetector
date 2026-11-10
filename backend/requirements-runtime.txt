@@ -1,0 +1,32 @@
+# DeepFake Detector Backend - Runtime Dependencies (inference + API)
+
+# Web framework
+fastapi>=0.109.0,<1.0.0
+uvicorn[standard]>=0.27.0,<1.0.0
+
+# Data validation
+pydantic>=2.5.0,<3.0.0
+pydantic-settings>=2.1.0,<3.0.0
+
+# Core image handling
+pillow>=10.2.0,<11.0.0
+matplotlib>=3.7.0,<4.0.0
+
+# Deep Learning
+torch>=2.0.0,<3.0.0
+torchvision>=0.15.0,<1.0.0
+timm>=0.9.0
+
+# Machine Learning (for fusion models)
+scikit-learn==1.6.1
+numpy>=1.24.0,<2.0.0
+
+# Hugging Face Hub
+huggingface_hub>=0.20.0,<1.0.0
+hf_xet
+
+# Google Gemini for LLM explanations
+google-genai>=1.0.0
+
+# File uploads
+python-multipart>=0.0.6,<1.0.0

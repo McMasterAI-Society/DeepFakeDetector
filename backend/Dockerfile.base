@@ -1,0 +1,26 @@
+# DeepFake Detector API - Dependency Base Image
+# Build this image occasionally, then reuse it from app Dockerfile for fast deploys.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PORT=7860 \
+    HF_CACHE_DIR=/app/.hf_cache \
+    HF_HUB_CACHE=/app/.hf_cache \
+    HF_HOME=/app/.hf_cache/hf_home \
+    HF_XET_CACHE=/app/.hf_cache/xet
+
+COPY requirements-runtime.txt requirements-optional.txt requirements.txt ./
+
+RUN useradd -m -u 1000 user \
+    && pip install --no-cache-dir --upgrade -r requirements-runtime.txt \
+    && mkdir -p /app/.hf_cache /app/.hf_cache/hf_home /app/.hf_cache/xet \
+    && chown -R user:user /app /home/user
+
+USER user
+ENV PATH="/home/user/.local/bin:$PATH"
