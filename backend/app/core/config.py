@@ -8,6 +8,20 @@ from pydantic_settings import BaseSettings
 from typing import Optional
 
 
+def _default_hf_cache_dir() -> str:
+    """Prefer persistent storage on HF Spaces when available."""
+    if os.path.isdir("/data"):
+        return "/data/.hf_cache"
+    return "/app/.hf_cache"
+
+
+def _default_hf_home() -> str:
+    """Prefer persistent Hugging Face home on HF Spaces when available."""
+    if os.path.isdir("/data"):
+        return "/data/.cache/huggingface"
+    return "/app/.hf_cache/hf_home"
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
@@ -16,7 +30,10 @@ class Settings(BaseSettings):
     #   - DeepFakeDetector/fusion-logreg-final (Logistic Regression - default)
     #   - DeepFakeDetector/fusion-meta-final (Meta-classifier)
     HF_FUSION_REPO_ID: str = "DeepFakeDetector/fusion-logreg-final"
-    HF_CACHE_DIR: str = ".hf_cache"
+    HF_CACHE_DIR: str = _default_hf_cache_dir()
+    HF_HOME: str = _default_hf_home()
+    HF_PERSISTENT_CACHE: bool = True
+    HF_PERSISTENT_CACHE_ROOT: str = "/data"
     HF_TOKEN: Optional[str] = None
     
     # Google Gemini API configuration

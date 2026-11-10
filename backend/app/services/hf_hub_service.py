@@ -38,6 +38,10 @@ class HFHubService:
         """
         self.cache_dir = cache_dir or settings.HF_CACHE_DIR
         self.token = token or settings.HF_TOKEN
+
+        # Keep Hugging Face process-wide cache settings aligned with app config.
+        os.environ.setdefault("HF_HOME", settings.HF_HOME)
+        os.environ.setdefault("HF_HUB_CACHE", self.cache_dir)
         
         # Ensure cache directory exists
         Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
