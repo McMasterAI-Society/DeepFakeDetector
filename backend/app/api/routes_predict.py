@@ -85,8 +85,15 @@ async def _persist_prediction(
             }
             for name, out in outputs.items()
         }
+        # Heatmaps can reveal the outline of the subject, so they are stored
+        # only with the same consent as the image itself.
+        explain_keys = (
+            _EXPLAIN_KEYS
+            if consent_store_image
+            else tuple(k for k in _EXPLAIN_KEYS if k != "heatmap_base64")
+        )
         explain = {
-            name: {k: out[k] for k in _EXPLAIN_KEYS if out.get(k) is not None}
+            name: {k: out[k] for k in explain_keys if out.get(k) is not None}
             for name, out in outputs.items()
         }
         prediction_id = await asyncio.to_thread(

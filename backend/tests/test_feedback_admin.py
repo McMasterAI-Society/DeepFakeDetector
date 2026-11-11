@@ -152,7 +152,8 @@ def test_predict_feedback_admin_roundtrip(client, store, mock_models):
     r = client.get(f"/admin/predictions/{pid}", headers=auth(token))
     assert r.status_code == 200
     detail = r.json()
-    assert detail["explain"]["cnn-transfer"]["heatmap_base64"] == HEATMAP
+    # No consent given: heatmaps are not stored, other explain metadata is.
+    assert "heatmap_base64" not in detail["explain"]["cnn-transfer"]
     assert detail["explain"]["vit-base"]["explainability_type"] == "attention_rollout"
     assert len(detail["image_sha256"]) == 64
 
@@ -209,6 +210,16 @@ def test_feedback_validation(client, store, mock_models):
 
 
 # ------------------------------------------------------------- consent/privacy
+
+def test_heatmaps_stored_only_with_consent(client, store, mock_models):
+    pid_no = do_predict(client, consent=False).json()["prediction_id"]
+    pid_yes = do_predict(client, consent=True).json()["prediction_id"]
+    token = login(client)
+    no = client.get(f"/admin/predictions/{pid_no}", headers=auth(token)).json()["explain"]
+    yes = client.get(f"/admin/predictions/{pid_yes}", headers=auth(token)).json()["explain"]
+    assert not any("heatmap_base64" in v for v in no.values())
+    assert yes["cnn-transfer"]["heatmap_base64"] == HEATMAP
+
 
 def test_no_image_written_without_consent(client, store, mock_models):
     for consent in (None, False):
