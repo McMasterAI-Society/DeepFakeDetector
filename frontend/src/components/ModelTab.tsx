@@ -37,10 +37,13 @@ interface ModelTabProps {
     pred: "real" | "fake";
     prob_fake: number;
     heatmap_base64?: string;
+    heatmap_signed_base64?: string;
     focus_summary?: string;
   };
   /** Contribution percentage from logistic regression (if fusion used) */
   contributionPercentage?: number;
+  /** Which way this model's contribution pushed the fusion decision */
+  contributionDirection?: "fake" | "real" | "neutral";
   /** Original image URL for slider */
   originalImageUrl?: string;
   /** Callback to request AI explanation */
@@ -54,6 +57,7 @@ const ModelTab = ({
   displayInfo,
   prediction,
   contributionPercentage,
+  contributionDirection,
   originalImageUrl,
   onRequestInsight,
   existingInsight,
@@ -96,7 +100,11 @@ const ModelTab = ({
             <div className="text-lg font-bold text-foreground">
               {contributionPercentage.toFixed(1)}%
             </div>
-            <div className="text-[10px] text-muted-foreground">contribution</div>
+            <div className="text-[10px] text-muted-foreground">
+              {contributionDirection && contributionDirection !== "neutral"
+                ? `contribution toward ${contributionDirection}`
+                : "contribution"}
+            </div>
           </div>
         )}
       </div>
@@ -119,6 +127,7 @@ const ModelTab = ({
         <ImageSlider
           originalImageUrl={originalImageUrl}
           heatmapBase64={prediction.heatmap_base64}
+          signedHeatmapBase64={prediction.heatmap_signed_base64}
           modelName={modelName}
         />
       )}
