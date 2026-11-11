@@ -16,7 +16,13 @@ from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 from app.core.errors import InferenceError, ConfigurationError
 from app.core.logging import get_logger
 from app.models.wrappers.base_wrapper import BaseSubmodelWrapper
-from app.services.explainability import GradCAM, heatmap_to_base64, compute_focus_summary
+from app.services.explainability import (
+    CAM_METHODS,
+    compute_cam,
+    compute_focus_summary,
+    heatmap_to_base64,
+    predicted_class,
+)
 
 logger = get_logger(__name__)
 
@@ -104,6 +110,20 @@ class CNNTransferWrapper(BaseSubmodelWrapper):
                 details={"repo_id": self.repo_id, "error": str(e)}
             )
     
+    # Default CAM target: features[5] (112 ch, 14x14 at 224 input). features[-2]
+    # and features[-3] are still 7x7 in EfficientNet-B0, so they add no spatial
+    # detail over features[-1]. Override with config "cam_layer" / "cam_method".
+    DEFAULT_CAM_LAYER = 5
+    DEFAULT_CAM_METHOD = "hirescam"
+
+    def _cam_settings(self) -> Tuple[nn.Module, str]:
+        layer_idx = int(self.config.get("cam_layer", self.DEFAULT_CAM_LAYER))
+        method = str(self.config.get("cam_method", self.DEFAULT_CAM_METHOD)).lower()
+        if method not in CAM_METHODS:
+            logger.warning(f"Unknown cam_method {method!r}; using {self.DEFAULT_CAM_METHOD}")
+            method = self.DEFAULT_CAM_METHOD
+        return self._model.features[layer_idx], method
+
     def _run_inference(
         self,
         image_tensor: torch.Tensor,
@@ -111,44 +131,41 @@ class CNNTransferWrapper(BaseSubmodelWrapper):
     ) -> Dict[str, Any]:
         """Run model inference on preprocessed tensor."""
         heatmap = None
-        
+        method = None
+
         if explain:
-            # Use GradCAM for explainability (requires gradients)
-            target_layer = self._model.features[-1]  # Last MBConv block
-            gradcam = GradCAM(self._model, target_layer)
-            try:
-                # GradCAM needs gradients, so don't use no_grad
-                logits = self._model(image_tensor)
-                probs = F.softmax(logits, dim=1)
-                prob_fake = probs[0, 1].item()
-                pred_int = 1 if prob_fake >= self._threshold else 0
-                
-                # Compute heatmap for predicted class
-                heatmap = gradcam(
-                    image_tensor.clone(),
-                    target_class=pred_int,
-                    output_size=(224, 224)
-                )
-            finally:
-                gradcam.remove_hooks()
+            # Logits and CAM from a single forward + partial backward pass
+            target_layer, method = self._cam_settings()
+            cam = compute_cam(
+                self._model,
+                image_tensor,
+                target_layer,
+                method=method,
+                target_class=lambda lg: predicted_class(lg, self._threshold),
+                output_size=(224, 224),
+            )
+            logits = cam.logits
+            heatmap = cam.heatmap
         else:
             with torch.no_grad():
                 logits = self._model(image_tensor)
-                probs = F.softmax(logits, dim=1)
-                prob_fake = probs[0, 1].item()
-                pred_int = 1 if prob_fake >= self._threshold else 0
-        
+
+        probs = F.softmax(logits, dim=1)
+        prob_fake = probs[0, 1].item()
+        pred_int = 1 if prob_fake >= self._threshold else 0
+
         result = {
             "logits": logits[0].detach().cpu().numpy().tolist(),
             "prob_fake": prob_fake,
             "pred_int": pred_int
         }
-        
+
         if heatmap is not None:
             result["heatmap"] = heatmap
-        
+            result["explainability_method"] = method
+
         return result
-    
+
     def predict(
         self,
         image: Optional[Image.Image] = None,
@@ -212,6 +229,7 @@ class CNNTransferWrapper(BaseSubmodelWrapper):
                 heatmap = result["heatmap"]
                 output["heatmap_base64"] = heatmap_to_base64(heatmap)
                 output["explainability_type"] = "grad_cam"
+                output["explainability_method"] = result.get("explainability_method")
                 output["focus_summary"] = compute_focus_summary(heatmap)
             
             return output
