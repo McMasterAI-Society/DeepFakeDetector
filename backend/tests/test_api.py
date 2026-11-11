@@ -31,6 +31,8 @@ class TestHealthEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
+        assert "manifest_hash" in data
+        assert isinstance(data.get("models"), list)
     
     def test_ready_returns_response(self, client):
         """Test that /ready returns a valid response structure."""
@@ -53,6 +55,7 @@ class TestModelsEndpoint:
         assert "fusion" in data
         assert "submodels" in data
         assert "total_count" in data
+        assert "manifest_hash" in data
         assert isinstance(data["submodels"], list)
 
 
