@@ -147,3 +147,6 @@ backend/testimages/
 
 # uvicorn/gunicorn
 *.pid
+
+# Local prediction store (backend DATA_DIR fallback)
+.local_data/

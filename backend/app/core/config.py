@@ -61,6 +61,46 @@ class Settings(BaseSettings):
         """Parse CORS origins from comma-separated string."""
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
     
+    # Prediction store / feedback (see app/services/store.py)
+    # DATA_DIR: where app.db and consented uploads live. Empty -> /data when
+    # writable (HF Spaces persistent volume), else ./.local_data.
+    DATA_DIR: Optional[str] = None
+    STORE_ENABLED: bool = True
+    # Rows, feedback and stored images older than this are purged. 0 disables purge.
+    RETENTION_DAYS: int = 90
+    PURGE_INTERVAL_HOURS: float = 24.0
+    # Longest side (px) of images kept for research; larger images are downscaled.
+    STORED_IMAGE_MAX_SIDE: int = 2048
+    STORED_IMAGE_WEBP_QUALITY: int = 90
+    # Salt for hashing client IPs (raw IPs are never stored). Empty -> random salt kept in the DB.
+    CLIENT_HASH_SALT: Optional[str] = None
+    # Serving variant recorded with each prediction (prod / candidate / shadow).
+    PREDICTION_VARIANT: str = "prod"
+
+    # Admin dashboard. Disabled unless ADMIN_PASSWORD_HASH is set.
+    # Generate the hash with: python -m app.scripts.hash_admin_password
+    ADMIN_PASSWORD_HASH: Optional[str] = None
+    # HMAC key for admin bearer tokens. Empty -> random per process (tokens die on restart).
+    ADMIN_TOKEN_SECRET: Optional[str] = None
+    ADMIN_TOKEN_TTL_SECONDS: int = 4 * 3600
+    ADMIN_LOGIN_MAX_FAILURES: int = 5
+    ADMIN_LOGIN_LOCKOUT_SECONDS: int = 900
+    # Probability band treated as "uncertain" in admin filters and stats.
+    UNCERTAIN_LOW: float = 0.35
+    UNCERTAIN_HIGH: float = 0.65
+
+    # Rate limiting (in-process token bucket per client IP). Format "<count>/<period>",
+    # period = second|minute|hour|day or a number of seconds.
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_PREDICT: str = "20/minute"
+    RATE_LIMIT_EXPLAIN: str = "20/minute"
+    RATE_LIMIT_FEEDBACK: str = "30/minute"
+    RATE_LIMIT_ADMIN_LOGIN: str = "10/minute"
+    # Comma-separated proxy IPs/CIDRs whose X-Forwarded-For is trusted. "*" trusts the
+    # immediate peer (use behind a single reverse proxy, e.g. HF Spaces).
+    # Empty -> X-Forwarded-For is ignored and the socket peer address is used.
+    TRUSTED_PROXIES: str = ""
+
     # API configuration
     API_V1_PREFIX: str = "/api/v1"
     PROJECT_NAME: str = "DeepFake Detector API"

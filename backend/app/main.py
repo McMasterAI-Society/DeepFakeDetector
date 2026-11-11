@@ -4,6 +4,7 @@ FastAPI application entry point.
 DeepFake Detector API - Milestone 1: Hugging Face hosted dummy models.
 """
 
+import asyncio
 import time
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
@@ -19,11 +20,12 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import routes_health, routes_models, routes_predict
+from app.api import routes_admin, routes_feedback, routes_health, routes_models, routes_predict
 from app.core.config import settings
 from app.core.errors import DeepFakeDetectorError
 from app.core.logging import setup_logging, get_logger
 from app.services.model_registry import get_model_registry
+from app.services.store import retention_loop
 
 # Set up logging
 setup_logging()
@@ -50,6 +52,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting DeepFake Detector API...")
     logger.info(f"Configuration: HF_FUSION_REPO_ID={settings.HF_FUSION_REPO_ID}")
     logger.info(f"Configuration: HF_CACHE_DIR={settings.HF_CACHE_DIR}")
+
+    # Prediction store: opens the DB and applies the retention policy periodically.
+    retention_task = asyncio.create_task(retention_loop())
     
     # Load models from Hugging Face
     try:
@@ -74,6 +79,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     
     # Shutdown
     logger.info("Shutting down DeepFake Detector API...")
+    retention_task.cancel()
 
 
 # Create FastAPI application
@@ -109,6 +115,9 @@ app.add_middleware(
 
 logger.info(f"CORS enabled for origins: {settings.cors_origins_list}")
 
+# No caching / indexing of admin responses
+app.middleware("http")(routes_admin.admin_headers_middleware)
+
 
 # Global exception handler for custom errors
 @app.exception_handler(DeepFakeDetectorError)
@@ -128,6 +137,9 @@ async def deepfake_error_handler(request: Request, exc: DeepFakeDetectorError):
 app.include_router(routes_health.router)
 app.include_router(routes_models.router)
 app.include_router(routes_predict.router)
+app.include_router(routes_feedback.router)
+app.include_router(routes_admin.router)
+app.include_router(routes_admin.protected)
 
 
 # Root endpoint

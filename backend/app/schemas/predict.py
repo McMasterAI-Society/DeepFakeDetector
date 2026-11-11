@@ -119,6 +119,11 @@ class PredictResponse(BaseModel):
         ...,
         description="Timing breakdown in milliseconds"
     )
+    prediction_id: Optional[str] = Field(
+        None,
+        description="Id of the stored prediction record (use it for POST /feedback). "
+                    "Null when the prediction store is unavailable."
+    )
     
     class Config:
         json_schema_extra = {

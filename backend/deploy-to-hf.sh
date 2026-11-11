@@ -246,6 +246,8 @@ exclude_items=(
   ".pytest_cache"
   ".env"
   ".hf_cache"
+  ".local_data"
+  ".venv"
   "testimages"
   "tests"
   "deploy-to-hf.ps1"
