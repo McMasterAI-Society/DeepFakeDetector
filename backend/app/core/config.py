@@ -49,6 +49,18 @@ class Settings(BaseSettings):
     ENABLE_DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
     
+    # Startup / inference performance
+    # Run one dummy forward pass per submodel after loading so CUDA context
+    # creation, kernel loading and cuDNN autotuning happen before the first
+    # user request instead of during it.
+    WARMUP_ON_STARTUP: bool = True
+    # torch.backends.cudnn.benchmark on CUDA (inputs are fixed-size after
+    # each wrapper's resize, so autotuning is done once per model).
+    CUDNN_BENCHMARK: bool = True
+    # fp16 autocast for the non-explain path on CUDA. Off by default because
+    # it changes probabilities slightly; enable only after checking outputs.
+    INFERENCE_FP16: bool = False
+
     # Server configuration
     HOST: str = "0.0.0.0"
     PORT: int = 8000
