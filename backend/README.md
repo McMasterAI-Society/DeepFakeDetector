@@ -164,6 +164,71 @@ After deploy, set Space secrets in Hugging Face:
 - `GOOGLE_API_KEY` (if using explanation endpoints)
 - `CORS_ORIGINS` (frontend domains)
 
+## Automated deployment
+
+GitHub Actions handles testing, the base image, Space deploys and model revision bumps.
+`deploy-to-hf.sh` (above) stays as the manual fallback, for example when Actions is down or for a
+one-off deploy from a local branch. The CI deploy reads its exclude list straight from
+`deploy-to-hf.sh`, so both paths ship the same files.
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `.github/workflows/backend-ci.yml` | PRs and pushes touching `backend/**`, `eval/**`, `frontend/**`, `tools/hf-webhook-relay/**` | Backend: Python 3.11, CPU torch, `pytest` in `backend/`, manifest validation. Frontend: `bun` lint, build, vitest. Relay: unit tests. Only the jobs whose paths changed run. |
+| `.github/workflows/deploy-space.yml` | Push to `development` touching `backend/**`, or manual run | Runs backend tests, waits for approval on the `production` environment, then uploads `backend/` to the Space in one commit (`HfApi.upload_folder`, `delete_patterns="*"`). |
+| `.github/workflows/base-image.yml` | Changes to `requirements-runtime.txt` or `Dockerfile.base` (push to `development`; PRs build only), or manual run | Builds `Dockerfile.base` and pushes `ghcr.io/<owner>/deepfake-detector-backend-base:latest` and `:<short-sha>`. Replaces `update-ghcr-base.{sh,ps1}`. |
+| `.github/workflows/model-update.yml` | `repository_dispatch` (`hf-model-updated`) from `tools/hf-webhook-relay`, or manual run | Pins the new revision in `model-manifest.json`, runs `python -m eval.run_eval` if `eval/` exists, opens a PR, and comments the eval output on it. |
+
+### Release flow
+
+1. Merge a PR into `development`. CI has already run on the PR.
+2. `deploy-space.yml` runs the backend tests again, then pauses for a reviewer on the `production`
+   environment. Approve it under Actions -> the run -> **Review deployments**.
+3. The Space gets one new commit and rebuilds. The run summary shows the Space revision.
+
+### Model updates
+
+`backend/model-manifest.json` lists the fusion repo and the four submodels, each with a pinned
+`revision` (a full commit sha, or `null` for `main`):
+
+1. A push to an allowlisted HF model repo fires the org webhook. The relay
+   (`tools/hf-webhook-relay`, its own CPU Space) checks the secret and sends a `repository_dispatch`.
+   To do this by hand, run **Model update PR** from the Actions tab with `repo_id` and an optional `revision`.
+2. `model-update.yml` resolves the revision to a sha, edits the manifest on a
+   `model-update/<repo>` branch and opens a PR. When `eval/run_eval` exists, it runs
+   `python -m eval.run_eval $EVAL_ARGS` (repo variable, default `--suite core`) with
+   `MODEL_MANIFEST=backend/model-manifest.json` and `EVAL_OUTPUT_DIR=eval-output`, and comments
+   the first `eval-output/*.md` report (or the tail of stdout) on the PR. Without `eval/` this step is skipped.
+3. Review the eval comment against the promotion gate, then merge. Nothing is deployed until then.
+4. The merge runs `deploy-space.yml` like any backend change, approval included.
+
+**Space restarts.** The deploy compares the staged `model-manifest.json` with the copy in the Space:
+
+- Manifest unchanged: no restart. A new commit rebuilds the Space as usual.
+- Manifest changed and the upload created a commit: no API restart. The rebuild already starts a
+  fresh container that reads the new manifest.
+- Manifest changed but the upload was a no-op (the Space already had these files, for example after a
+  manual `deploy-to-hf.sh`), or the manual run sets `force_restart`: the workflow calls
+  `HfApi().restart_space(...)` so the running process reloads the pinned revisions.
+
+Code changes never cause an API restart.
+
+### Required settings
+
+GitHub (repo Settings):
+
+- Environment `production` with required reviewers, deployment branches limited to `development`.
+- Secret `HF_TOKEN` (on the `production` environment): HF token with write access to the Space.
+- Variable `HF_SPACE_ID`: the Space repo id, `<owner>/<space-name>` (the repo `HF_SPACE_URL` in `.env` points at).
+- Variable `HF_BASE_IMAGE` (optional): for example `ghcr.io/mcmasterai-society/deepfake-detector-backend-base:latest`.
+  The GHCR package must be public so HF can pull it. If unset, `python:3.11-slim` is used and the
+  Space installs dependencies during the build.
+- Variable `INSTALL_OPTIONAL_DEPS` (optional, default `false`), `EVAL_ARGS` (optional).
+- Secret `MODEL_UPDATE_TOKEN` (optional): fine-grained PAT (Contents + Pull requests: write). PRs
+  opened with the default `GITHUB_TOKEN` do not trigger CI, so set this to have CI run on model-update PRs.
+- Secret `HF_TOKEN` at repo level too (read access is enough) if any model repo is private; `model-update.yml` uses it to resolve revisions.
+
+Hugging Face: see `tools/hf-webhook-relay/README.md` for the relay Space and the org webhook.
+
 ## Persistent Bucket Cache on Spaces
 
 The backend now prefers persistent cache paths when a bucket is mounted read/write at `/data`.
