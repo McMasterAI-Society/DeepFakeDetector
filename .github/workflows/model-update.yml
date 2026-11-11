@@ -92,6 +92,7 @@ jobs:
         continue-on-error: true
         env:
           MODEL_MANIFEST: backend/model-manifest.json
+          MODEL_MANIFEST_PATH: ${{ github.workspace }}/backend/model-manifest.json
           EVAL_OUTPUT_DIR: eval-output
           EVAL_ARGS: ${{ vars.EVAL_ARGS || '--suite core' }}
         run: |

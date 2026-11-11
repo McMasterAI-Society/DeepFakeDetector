@@ -196,7 +196,7 @@ one-off deploy from a local branch. The CI deploy reads its exclude list straigh
 2. `model-update.yml` resolves the revision to a sha, edits the manifest on a
    `model-update/<repo>` branch and opens a PR. When `eval/run_eval` exists, it runs
    `python -m eval.run_eval $EVAL_ARGS` (repo variable, default `--suite core`) with
-   `MODEL_MANIFEST=backend/model-manifest.json` and `EVAL_OUTPUT_DIR=eval-output`, and comments
+   `MODEL_MANIFEST=backend/model-manifest.json` (and `MODEL_MANIFEST_PATH`, read by the backend) and `EVAL_OUTPUT_DIR=eval-output`, and comments
    the first `eval-output/*.md` report (or the tail of stdout) on the PR. Without `eval/` this step is skipped.
 3. Review the eval comment against the promotion gate, then merge. Nothing is deployed until then.
 4. The merge runs `deploy-space.yml` like any backend change, approval included.
