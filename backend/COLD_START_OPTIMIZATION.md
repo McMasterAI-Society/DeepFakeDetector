@@ -500,11 +500,11 @@ an image.
 Files: `app/main.py`, `app/services/inference_service.py`, `app/core/config.py`.
 
 - After models load, the lifespan runs `warm_up_on_startup()` in a worker
-  thread: it sets `torch.backends.cudnn.benchmark = True` on CUDA
-  (`CUDNN_BENCHMARK`, default true), then runs one non-explain forward per
+  thread: it sets `torch.backends.cudnn.benchmark = True` on CUDA only when
+  `CUDNN_BENCHMARK=true` (default false), then runs one non-explain forward per
   submodel on a deterministic 256x256 noise image.
 - Settings: `WARMUP_ON_STARTUP` (default `true`), `CUDNN_BENCHMARK` (default
-  `true`). Warm-up failures are logged and never stop startup.
+  `false`). Warm-up failures are logged and never stop startup.
 - New log markers (same `phase3` style):
   - `phase3 cudnn_benchmark=enabled`
   - `phase3 startup_warmup_model name=<model> duration_seconds=<s>`
@@ -528,10 +528,10 @@ number:
 
 On this machine cuDNN autotuning for the EfficientNet backbone dominates the
 warm-up. Steady-state explain-off latency was lower with benchmark on, but the
-laptop numbers were noisy. **Decide the default from T4 data**: if
-`startup_warmup_duration_seconds` on the Space is similar, set
-`CUDNN_BENCHMARK=false` as a Space variable; the extra startup would cost
-more than the per-request saving.
+laptop numbers were noisy. The default is therefore **false**. Measure
+`startup_warmup_duration_seconds` on the T4 with `CUDNN_BENCHMARK=true` as a
+Space variable; enable it by default only if the extra startup is small
+compared with the per-request saving.
 
 ### 8.4 Inference path (CS6)
 

@@ -54,9 +54,10 @@ class Settings(BaseSettings):
     # creation, kernel loading and cuDNN autotuning happen before the first
     # user request instead of during it.
     WARMUP_ON_STARTUP: bool = True
-    # torch.backends.cudnn.benchmark on CUDA (inputs are fixed-size after
-    # each wrapper's resize, so autotuning is done once per model).
-    CUDNN_BENCHMARK: bool = True
+    # torch.backends.cudnn.benchmark on CUDA. Off by default: autotuning
+    # EfficientNet added ~25 s to warm-up in local tests, which costs more
+    # cold-start time than it saves per request. Re-enable from T4 data.
+    CUDNN_BENCHMARK: bool = False
     # fp16 autocast for the non-explain path on CUDA. Off by default because
     # it changes probabilities slightly; enable only after checking outputs.
     INFERENCE_FP16: bool = False
