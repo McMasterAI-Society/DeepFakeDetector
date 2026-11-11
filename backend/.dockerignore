@@ -1,0 +1,25 @@
+# Keep the build context small; only app/, start.sh and requirements*.txt
+# are copied into the image.
+.git
+.gitignore
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.venv
+venv
+.env
+.env.*
+!.env.example
+.hf_cache
+.cache
+data
+tests
+testimages
+*.md
+deploy-to-hf.sh
+deploy-to-hf.ps1
+sync-bucket.sh
+update-ghcr-base.sh
+update-ghcr-base.ps1

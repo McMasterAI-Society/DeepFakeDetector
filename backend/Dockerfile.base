@@ -1,7 +1,64 @@
 # DeepFake Detector API - Dependency Base Image
-# Build this image occasionally, then reuse it from app Dockerfile for fast deploys.
+# Build this image occasionally, push it to GHCR, then reuse it from the app
+# Dockerfile (BASE_IMAGE) for fast deploys.
+#
+# Multi-stage: dependencies are installed into a virtualenv in a throwaway
+# builder stage, slimmed, then copied as a single layer onto a clean
+# python:3.11-slim. The final stage has no pip cache, no build leftovers and
+# no layers carrying files that were deleted later.
+#
+# torch/torchvision come from the official PyTorch CUDA wheel index, pinned in
+# requirements-torch.txt (T4 / sm_75 compatible), instead of whatever PyPI
+# resolves to on the day the image is built.
 
-FROM python:3.11-slim
+ARG PYTHON_IMAGE=python:3.11-slim
+
+# ---------------------------------------------------------------------------
+# Stage 1: builder
+# ---------------------------------------------------------------------------
+FROM ${PYTHON_IMAGE} AS builder
+
+# SLIM_TORCH=true removes parts of the torch stack this API never uses at
+# runtime: triton (only needed by torch.compile / inductor), C/C++ headers and
+# static archives (only needed to compile extensions).
+# Build with --build-arg SLIM_TORCH=false if torch.compile is ever enabled.
+ARG SLIM_TORCH=true
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /build
+
+RUN python -m venv /opt/venv
+
+COPY requirements-torch.txt requirements-runtime.txt ./
+
+# 1) torch/torchvision from the PyTorch CUDA index (pinned).
+# 2) everything else from PyPI, constrained so torch is never re-resolved.
+RUN pip install -r requirements-torch.txt \
+    && pip freeze | grep -E '^(torch|torchvision)==' > /build/torch-constraints.txt \
+    && pip install -r requirements-runtime.txt -c /build/torch-constraints.txt
+
+RUN if [ "$SLIM_TORCH" = "true" ]; then \
+        pip uninstall -y triton || true; \
+        SITE="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"; \
+        rm -rf "$SITE/torch/include" "$SITE/torch/share/cmake"; \
+        find "$SITE/nvidia" -mindepth 2 -maxdepth 2 -type d -name include -exec rm -rf {} + ; \
+        find "$SITE" -name '*.a' -delete; \
+    fi \
+    && rm -rf /root/.cache /tmp/*
+
+# Fail the build here (not at Space start) if slimming broke an import.
+RUN python -c "import torch, torchvision, timm, sklearn, fastapi, uvicorn, matplotlib, google.genai; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime
+# ---------------------------------------------------------------------------
+FROM ${PYTHON_IMAGE}
 
 WORKDIR /app
 
@@ -9,16 +66,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH" \
     PORT=7860 \
     HF_CACHE_DIR=/app/.hf_cache \
     HF_HUB_CACHE=/app/.hf_cache \
     HF_HOME=/app/.hf_cache/hf_home \
     HF_XET_CACHE=/app/.hf_cache/xet
 
-COPY requirements-runtime.txt requirements-optional.txt requirements.txt ./
+COPY --from=builder /opt/venv /opt/venv
+
+COPY requirements-torch.txt requirements-runtime.txt requirements-optional.txt requirements.txt ./
 
 RUN useradd -m -u 1000 user \
-    && pip install --no-cache-dir --upgrade -r requirements-runtime.txt \
     && mkdir -p /app/.hf_cache /app/.hf_cache/hf_home /app/.hf_cache/xet \
     && chown -R user:user /app /home/user
 

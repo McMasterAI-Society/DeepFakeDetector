@@ -21,11 +21,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 ARG INSTALL_OPTIONAL_DEPS=false
 USER root
 RUN id -u user >/dev/null 2>&1 || useradd -m -u 1000 user
-COPY --chown=user:user requirements-runtime.txt requirements-optional.txt requirements.txt ./
+COPY --chown=user:user requirements-torch.txt requirements-runtime.txt requirements-optional.txt requirements.txt ./
 
 # If the base image already contains runtime deps, this check passes and install is skipped.
+# Fallback path: pinned CUDA torch from the PyTorch index first, then the rest
+# constrained to that torch (never --upgrade, which would pull PyPI torch).
 RUN python -c "import fastapi, torch, timm, sklearn, google.genai" \
-    || pip install --no-cache-dir --upgrade -r requirements-runtime.txt
+    || ( pip install --no-cache-dir -r requirements-torch.txt \
+         && pip freeze | grep -E '^(torch|torchvision)==' > /tmp/torch-constraints.txt \
+         && pip install --no-cache-dir -r requirements-runtime.txt -c /tmp/torch-constraints.txt \
+         && rm -rf /root/.cache /tmp/torch-constraints.txt )
 
 RUN if [ "$INSTALL_OPTIONAL_DEPS" = "true" ]; then \
          python -c "import pytest" \
@@ -37,7 +42,9 @@ ENV PATH="/home/user/.local/bin:$PATH"
 
 # Copy only files required for model prefetch first.
 COPY --chown=user:user app /app/app
-COPY --chown=user:user start.sh /app/start.sh
+# model-manifest.json is optional: the wildcard lets the build pass when it is
+# absent (start.sh always matches, so the COPY never has zero sources).
+COPY --chown=user:user start.sh model-manifest.json* /app/
 
 # Switch to root to create cache directory and set permissions
 USER root

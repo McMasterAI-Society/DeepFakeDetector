@@ -1,0 +1,12 @@
+# DeepFake Detector Backend - PyTorch pins (CUDA build for the HF Spaces T4)
+#
+# Installed BEFORE requirements-runtime.txt by Dockerfile.base / Dockerfile so
+# the image gets a known CUDA build instead of whatever PyPI resolves to.
+# The T4 is compute capability 7.5 (sm_75), which every cu12x wheel includes.
+# cu124 needs an NVIDIA driver >= 525.60 (CUDA 12 minor-version compatibility).
+#
+# To switch CUDA build, change the index URL and the +cuXXX local versions
+# together, e.g. cu121 + torch==2.5.1+cu121 / torchvision==0.20.1+cu121.
+--index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
