@@ -15,6 +15,7 @@ from app.core.errors import (
     ModelNotFoundError,
     ModelNotLoadedError
 )
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.schemas.predict import (
     PredictResponse,
@@ -31,10 +32,89 @@ from app.services.fusion_service import get_fusion_service
 from app.services.preprocess_service import get_preprocess_service
 from app.services.model_registry import get_model_registry
 from app.services.llm_service import get_llm_service, get_model_display_info, MODEL_DISPLAY_INFO
+from app.models.wrappers.foundation_probe_wrapper import BACKBONE_DISPLAY_KEYS
 from app.utils.timing import Timer
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["predict"])
+
+
+def _legacy_model_version(registry) -> str:
+    manifest_hash = registry.get_manifest_hash()
+    return f"legacy-fusion:{manifest_hash[:12]}" if manifest_hash else "legacy-fusion"
+
+
+def _legacy_verdict(pred: str) -> str:
+    return "ai" if pred == "fake" else "real"
+
+
+def _run_probe(image_bytes: bytes, explain: bool, return_submodels: bool, timer: Timer) -> PredictResponse:
+    """Run the foundation probe and build the response (timer already started)."""
+    probe = get_model_registry().get_probe()
+    with timer.measure("inference"):
+        result = get_inference_service().predict_single(
+            model_key=probe.name, image_bytes=image_bytes, explain=explain
+        )
+    timer.stop_total()
+    return _probe_response(result, timer, return_submodels)
+
+
+def _probe_response(
+    result: dict,
+    timer: Timer,
+    return_submodels: bool,
+) -> PredictResponse:
+    """
+    Build the /predict response for the foundation probe.
+
+    The two backbones are reported as "submodels" so the existing frontend tabs
+    work: prob_fake is the calibrated probability with only that backbone's
+    evidence (the other at its training mean), contribution_percentage is the
+    backbone's share of |logit| and fusion_meta.weighted_contributions holds the
+    signed logit contributions (they sum, with logit_intercept, to the raw logit).
+    """
+    backbones = result.get("backbones", {})
+    names = {key: BACKBONE_DISPLAY_KEYS.get(key, key) for key in backbones}
+    fusion_meta = FusionMeta(
+        submodel_weights={names[k]: v["coef_norm"] for k, v in backbones.items()},
+        weighted_contributions={names[k]: v["logit_contribution"] for k, v in backbones.items()},
+        contribution_percentages={names[k]: v["contribution_percentage"] for k, v in backbones.items()},
+        logit_intercept=result.get("meta", {}).get("intercept"),
+    )
+    submodels = None
+    display_info = None
+    if return_submodels:
+        submodels = {
+            names[k]: PredictionResult(
+                pred=v["pred"],
+                pred_int=v["pred_int"],
+                prob_fake=v["prob_fake"],
+                heatmap_base64=v.get("heatmap_base64"),
+                explainability_type=v.get("explainability_type"),
+                focus_summary=v.get("focus_summary"),
+                contribution_percentage=v["contribution_percentage"],
+            )
+            for k, v in backbones.items()
+        }
+        display_info = {n: ModelDisplayInfo(**get_model_display_info(n)) for n in submodels}
+    return PredictResponse(
+        final=PredictionResult(
+            pred=result["pred"],
+            pred_int=result["pred_int"],
+            prob_fake=result["prob_fake"],
+            heatmap_base64=result.get("heatmap_base64"),
+            explainability_type=result.get("explainability_type"),
+            focus_summary=result.get("focus_summary"),
+        ),
+        fusion_used=False,
+        submodels=submodels,
+        fusion_meta=fusion_meta,
+        model_display_info=display_info,
+        timing_ms=TimingInfo(**timer.get_timings()),
+        verdict=result["verdict"],
+        verdict_bands=result.get("meta", {}).get("verdict_bands"),
+        model_version=result.get("model_version"),
+    )
 
 
 @router.post(
@@ -78,6 +158,10 @@ async def predict(
     When use_fusion=false:
     - Runs only the specified submodel (or the first available if not specified)
     - Returns just that model's prediction
+
+    In foundation-probe mode (MODEL_MODE, the default) the probe is the only
+    model: use_fusion is ignored, the two backbones are reported as submodels
+    with their logit contributions, and ``verdict`` can be "inconclusive".
     
     Response includes timing information for each step.
     """
@@ -100,6 +184,16 @@ async def predict(
         inference_service = get_inference_service()
         fusion_service = get_fusion_service()
         registry = get_model_registry()
+
+        if registry.mode == "foundation-probe":
+            if model and registry.get_submodel(model) is not registry.get_probe():
+                raise ModelNotFoundError(message=f"Submodel not found: {model}")
+            return _run_probe(
+                image_bytes,
+                explain=explain and settings.PROBE_EXPLAIN_ON_PREDICT,
+                return_submodels=return_submodels if return_submodels is not None else True,
+                timer=timer,
+            )
         
         if use_fusion:
             # Run all submodels
@@ -154,7 +248,9 @@ async def predict(
                 } if should_return_submodels else None,
                 fusion_meta=fusion_meta,
                 model_display_info=model_display_info if should_return_submodels else None,
-                timing_ms=TimingInfo(**timer.get_timings())
+                timing_ms=TimingInfo(**timer.get_timings()),
+                verdict=_legacy_verdict(final_result["pred"]),
+                model_version=_legacy_model_version(registry),
             )
         
         else:
@@ -181,7 +277,9 @@ async def predict(
                 ),
                 fusion_used=False,
                 submodels=None,
-                timing_ms=TimingInfo(**timer.get_timings())
+                timing_ms=TimingInfo(**timer.get_timings()),
+                verdict=_legacy_verdict(result["pred"]),
+                model_version=_legacy_model_version(registry),
             )
     
     except ImageProcessingError as e:
@@ -218,6 +316,46 @@ async def predict(
             status_code=500,
             detail={"error": "InternalError", "message": str(e)}
         )
+
+
+@router.post(
+    "/explain",
+    response_model=PredictResponse,
+    summary="Prediction with heatmaps (foundation probe)",
+    description="Same as /predict but always computes the probe's input-gradient heatmaps. "
+                "Slower (~2.8x), so the frontend calls it on demand.",
+    responses={409: {"model": ErrorResponse, "description": "Not in foundation-probe mode"}},
+)
+async def explain_probe(
+    image: UploadFile = File(..., description="Image file to analyze"),
+    return_submodels: bool = Query(True, description="Include per-backbone results"),
+) -> PredictResponse:
+    timer = Timer()
+    timer.start_total()
+    try:
+        registry = get_model_registry()
+        if registry.mode != "foundation-probe":
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "NotSupported",
+                        "message": "/explain needs MODEL_MODE=foundation-probe; use /predict?explain=true"},
+            )
+        with timer.measure("download"):
+            image_bytes = await image.read()
+        with timer.measure("preprocess"):
+            get_preprocess_service().validate_image(image_bytes)
+        return _run_probe(image_bytes, explain=True, return_submodels=return_submodels, timer=timer)
+    except HTTPException:
+        raise
+    except ImageProcessingError as e:
+        raise HTTPException(status_code=400, detail={"error": "ImageProcessingError", "message": e.message})
+    except ModelNotLoadedError as e:
+        raise HTTPException(status_code=503, detail={"error": "ModelNotLoadedError", "message": e.message})
+    except InferenceError as e:
+        raise HTTPException(status_code=500, detail={"error": "InferenceError", "message": e.message})
+    except Exception as e:
+        logger.exception(f"Unexpected error in explain endpoint: {e}")
+        raise HTTPException(status_code=500, detail={"error": "InternalError", "message": str(e)})
 
 
 @router.post("/explain-model", response_model=ExplainModelResponse)

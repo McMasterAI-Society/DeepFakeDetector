@@ -49,7 +49,7 @@ class PredictionResult(BaseModel):
         None,
         description="Base64-encoded PNG heatmap showing model attention/saliency (when explain=true)"
     )
-    explainability_type: Optional[Literal["grad_cam", "attention_rollout"]] = Field(
+    explainability_type: Optional[Literal["grad_cam", "attention_rollout", "input_gradient"]] = Field(
         None,
         description="Type of explainability method used"
     )
@@ -79,6 +79,10 @@ class FusionMeta(BaseModel):
     contribution_percentages: Dict[str, float] = Field(
         default_factory=dict,
         description="Normalized percentages for display"
+    )
+    logit_intercept: Optional[float] = Field(
+        None,
+        description="Foundation probe: LR intercept; weighted_contributions + intercept = raw logit"
     )
 
 
@@ -118,6 +122,20 @@ class PredictResponse(BaseModel):
     timing_ms: TimingInfo = Field(
         ...,
         description="Timing breakdown in milliseconds"
+    )
+    verdict: Optional[Literal["ai", "inconclusive", "real"]] = Field(
+        None,
+        description="Three-way verdict. The foundation probe returns 'inconclusive' when "
+                    "prob_fake is inside verdict_bands; legacy fusion only returns ai/real"
+    )
+    verdict_bands: Optional[List[float]] = Field(
+        None,
+        description="[lower, upper] prob_fake edges: real below lower, ai at or above upper"
+    )
+    model_version: Optional[str] = Field(
+        None,
+        description="Identifier of the served model (head version and feature-spec hash, "
+                    "or the legacy manifest hash)"
     )
     
     class Config:

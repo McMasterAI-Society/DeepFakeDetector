@@ -43,7 +43,9 @@ async def list_models() -> ModelsListResponse:
             config=model.get("config")
         )
         
-        if model["model_type"] == "fusion":
+        # In foundation-probe mode the probe takes the fusion slot and its
+        # backbones are listed as submodels.
+        if model["model_type"] in ("fusion", "probe"):
             fusion_info = model_info
         else:
             submodels_info.append(model_info)

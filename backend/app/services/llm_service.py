@@ -108,6 +108,42 @@ MODEL_DISPLAY_INFO = {
             "Natural boundary transitions",
             "Gradient flow coherence"
         ]
+    },
+    # Foundation-probe backbones (one frozen model each; the decision is a single
+    # linear head over both, these entries show each backbone's share of it).
+    "clip-b16": {
+        "display_name": "Semantic Features",
+        "short_name": "CLIP",
+        "method_name": "Input Gradient",
+        "method_description": "Gradient x activation of the detector's logit at each image patch",
+        "educational_text": (
+            "CLIP was trained to match images with captions, so its features capture what an image "
+            "depicts and its overall style. A linear detector reads these features; this tab shows how "
+            "much of the decision came from CLIP and which patches pushed it most. "
+            "Generated images often carry a characteristic 'rendered' look that these features pick up."
+        ),
+        "what_it_looks_for": [
+            "Overall rendering style",
+            "Scene and object plausibility",
+            "Generator-typical aesthetics"
+        ]
+    },
+    "dinov3-b16": {
+        "display_name": "Visual Structure",
+        "short_name": "DINOv3",
+        "method_name": "Input Gradient",
+        "method_description": "Gradient x activation of the detector's logit at each image patch",
+        "educational_text": (
+            "DINOv3 is a self-supervised vision model whose features describe local structure, texture "
+            "and geometry. A linear detector reads these features; this tab shows how much of the decision "
+            "came from DINOv3 and which patches pushed it most. "
+            "Generated images often show subtle texture and structure statistics that differ from camera photos."
+        ),
+        "what_it_looks_for": [
+            "Texture statistics",
+            "Local structure and geometry",
+            "Patch-level consistency"
+        ]
     }
 }
 
@@ -135,6 +171,8 @@ MODEL TYPES AND WHAT THEY ANALYZE:
 - CNN (rgb_texture_cnn): Pixel textures, colors, fine details - looks for texture anomalies
 - ViT/DeiT (patch_consistency_vit): Global consistency, patch relationships - looks for coherence issues
 - GradField (edge_coherence_cnn): Edge patterns, boundaries, gradient fields - looks for edge artifacts
+- CLIP / DINOv3 (foundation probe backbones): frozen general-purpose vision features read by one linear
+  detector; heatmaps are input gradients (which patches pushed the decision), not attention
 
 OUTPUT FORMAT:
 You must respond with valid JSON matching this exact structure:
