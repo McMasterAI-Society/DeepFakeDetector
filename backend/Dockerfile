@@ -38,6 +38,7 @@ ENV PATH="/home/user/.local/bin:$PATH"
 # Copy only files required for model prefetch first.
 COPY --chown=user:user app /app/app
 COPY --chown=user:user start.sh /app/start.sh
+COPY --chown=user:user model-manifest.json /app/model-manifest.json
 
 # Switch to root to create cache directory and set permissions
 USER root

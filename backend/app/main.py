@@ -48,6 +48,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Startup
     logger.info("Starting DeepFake Detector API...")
+    logger.info(f"Configuration: MODEL_MODE={settings.MODEL_MODE}")
+    logger.info(f"Configuration: HF_PROBE_REPO_ID={settings.HF_PROBE_REPO_ID}")
     logger.info(f"Configuration: HF_FUSION_REPO_ID={settings.HF_FUSION_REPO_ID}")
     logger.info(f"Configuration: HF_CACHE_DIR={settings.HF_CACHE_DIR}")
     
@@ -55,7 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         model_load_t0 = time.perf_counter()
         registry = get_model_registry()
-        await registry.load_from_fusion_repo(settings.HF_FUSION_REPO_ID)
+        await registry.load_production_model()
         logger.info(
             "phase3 startup_model_load_duration_seconds=%.3f",
             time.perf_counter() - model_load_t0,
@@ -85,8 +87,11 @@ app = FastAPI(
     
     ## Features
     
-    - **Fusion prediction**: Combines submodel probabilities (EfficientNet transfer,
-      ViT, DeiT distilled, gradient-field CNN) with a logistic-regression stacker
+    - **Foundation probe (default)**: frozen CLIP-B/16 + DINOv3-B/16 features with a
+      calibrated linear head and a three-way verdict (ai / inconclusive / real)
+    - **Legacy fusion** (MODEL_MODE=legacy-fusion): combines submodel probabilities
+      (EfficientNet transfer, ViT, DeiT distilled, gradient-field CNN) with a
+      logistic-regression stacker
     - **Individual model prediction**: Run specific submodels directly
     - **Explainability**: Optional per-model heatmaps and LLM explanations
     - **Timing information**: Detailed performance metrics for each request

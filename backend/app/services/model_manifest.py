@@ -170,3 +170,41 @@ def compute_manifest_hash(models: List[Dict[str, Any]]) -> str:
     canonical = [{k: m.get(k) for k in keys} for m in models]
     payload = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def resolve_probe_pins(
+    probe_repo_id: str, manifest: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Pins for the foundation-model probe from the manifest's ``probe`` section::
+
+        {"probe": {"repo_id": "...", "revision": "<sha or null>",
+                   "backbones": {"<key>": {"repo_id": "...", "revision": "<sha>",
+                                           "filename": "..."}}}}
+
+    Returns ``{"revision": ..., "backbones": {...}}`` (empty when absent). The
+    head revision is ignored when the manifest names a different repo; backbone
+    pins apply regardless, since they describe upstream repos.
+    """
+    probe = (manifest or {}).get("probe") or {}
+    if not isinstance(probe, dict):
+        raise ConfigurationError(message="Manifest 'probe' must be an object")
+    out: Dict[str, Any] = {"revision": None, "backbones": {}}
+    if probe.get("revision"):
+        if probe.get("repo_id") in (None, probe_repo_id):
+            out["revision"] = probe["revision"]
+        else:
+            logger.warning(
+                "Manifest probe repo_id %s does not match configured %s; ignoring its revision",
+                probe.get("repo_id"),
+                probe_repo_id,
+            )
+    for key, pin in (probe.get("backbones") or {}).items():
+        if not isinstance(pin, dict):
+            raise ConfigurationError(
+                message="Manifest probe backbone pins must be objects", details={"key": key}
+            )
+        out["backbones"][key] = {
+            k: pin.get(k) for k in ("repo_id", "revision", "filename", "timm_name") if pin.get(k)
+        }
+    return out

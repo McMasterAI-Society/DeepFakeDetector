@@ -1,0 +1,19 @@
+{
+  "_comment": "Pinned model revisions. 'probe.revision' is null until DeepFakeDetector/fm-probe-clip-dinov3 is uploaded: set it to the upload commit sha. Backbone revisions are the upstream timm commits the head was fit against (checked 2026-11-11).",
+  "probe": {
+    "repo_id": "DeepFakeDetector/fm-probe-clip-dinov3",
+    "revision": null,
+    "backbones": {
+      "clip_b16": {
+        "repo_id": "timm/vit_base_patch16_clip_224.openai",
+        "revision": "977e3dd0ec55ab8da155f2fbeb6b5f54948b6e3d",
+        "filename": "pytorch_model.bin"
+      },
+      "dinov3_b16": {
+        "repo_id": "timm/vit_base_patch16_dinov3.lvd1689m",
+        "revision": "c6a5fb7d12bbd3cf3b0079253141c3332aaed7da",
+        "filename": "model.safetensors"
+      }
+    }
+  }
+}
