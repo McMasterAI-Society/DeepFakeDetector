@@ -1,7 +1,10 @@
 {
   "type": "foundation-probe",
   "name": "fm-probe-clip-dinov3",
-  "backbones": ["clip_b16", "dinov3_b16"],
+  "backbones": [
+    "clip_b16",
+    "dinov3_b16"
+  ],
   "timm_names": {
     "clip_b16": "vit_base_patch16_clip_224.openai",
     "dinov3_b16": "vit_base_patch16_dinov3.lvd1689m"
@@ -18,10 +21,29 @@
       "filename": "model.safetensors"
     }
   },
-  "layers": [5, 8],
+  "layers": [
+    5,
+    8
+  ],
   "feature": "per backbone: L2norm(CLS after block 6) | L2norm(CLS after block 9) | L2norm(head pre-logits pooled); concat in backbone order (4608-d)",
   "preprocess": "EXIF transpose, RGB; short side->512 Lanczos; JPEG q90 round-trip; short side->224 bicubic; center crop 224; per-backbone timm mean/std",
   "head": "StandardScaler + LogisticRegression, Platt-calibrated on core-val-norm; see head.npz",
   "head_file": "head.npz",
-  "verdict_bands": [0.2, 0.7]
+  "verdict_bands": [
+    0.21,
+    0.56
+  ],
+  "train_config": {
+    "bbs": "clip_b16+dinov3_b16",
+    "layers": "multi",
+    "train": "both+deit+lead+coco+flickr30k+div2k+flickr2k",
+    "head": "lr",
+    "hp": 0.03,
+    "n_train": 24445,
+    "train_aug": "norm",
+    "view": "cc"
+  },
+  "threshold": 0.5056974868161198,
+  "head_version": "lead_v2_C0.03-20261112",
+  "feature_spec_hash": "9a86896236750895478e3217543db986d4c57192b24b668ce027428e2ffb1e2b"
 }
