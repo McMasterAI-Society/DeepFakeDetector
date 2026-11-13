@@ -1,7 +1,7 @@
 ---
 license: other
 license_name: dinov3-license
-license_link: LICENSE-DINOv3.md
+license_link: https://huggingface.co/DeepFakeDetector/fm-probe-clip-dinov3/blob/main/LICENSE-DINOv3.md
 library_name: timm
 pipeline_tag: image-classification
 tags:
