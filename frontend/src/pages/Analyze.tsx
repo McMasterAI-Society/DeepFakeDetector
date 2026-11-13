@@ -7,6 +7,7 @@ import ResultsPanel from "@/components/ResultsPanel";
 import ResultsSkeleton from "@/components/ResultsSkeleton";
 import AnalyzingOverlay from "@/components/AnalyzingOverlay";
 import DemoImages from "@/components/DemoImages";
+import BackendWarmupBanner from "@/components/BackendWarmupBanner";
 import { Button } from "@/components/ui/button";
 import type { SingleModelInsight } from "@/components/ModelTab";
 
@@ -162,6 +163,8 @@ const Analyze = () => {
   return (
     <AppLayout>
       <div className="max-w-xl mx-auto space-y-6 px-1 sm:px-0">
+        <BackendWarmupBanner />
+
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}

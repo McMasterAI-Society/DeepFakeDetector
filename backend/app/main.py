@@ -4,6 +4,7 @@ FastAPI application entry point.
 DeepFake Detector API - Milestone 1: Hugging Face hosted dummy models.
 """
 
+import asyncio
 import time
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
@@ -23,6 +24,7 @@ from app.api import routes_health, routes_models, routes_predict
 from app.core.config import settings
 from app.core.errors import DeepFakeDetectorError
 from app.core.logging import setup_logging, get_logger
+from app.services.inference_service import warm_up_on_startup
 from app.services.model_registry import get_model_registry
 
 # Set up logging
@@ -64,6 +66,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.error(f"Failed to load models on startup: {e}")
         logger.warning("API will start but /ready will report not_ready until models are loaded")
+
+    # Warm-up runs before the server starts accepting requests, so /ready
+    # only answers once the first real request will not pay CUDA init.
+    try:
+        await asyncio.to_thread(warm_up_on_startup)
+    except Exception as e:
+        logger.warning(f"Startup warm-up failed (continuing): {e}")
 
     logger.info(
         "phase3 startup_lifespan_total_duration_seconds=%.3f",
