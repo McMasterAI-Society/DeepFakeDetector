@@ -9,7 +9,7 @@ interface SubmodelResult {
   pred_int: number;
   prob_fake: number;
   heatmap_base64?: string;
-  explainability_type?: "grad_cam" | "attention_rollout";
+  explainability_type?: "grad_cam" | "attention_rollout" | "input_gradient";
   focus_summary?: string;
   contribution_percentage?: number;
 }
@@ -18,6 +18,7 @@ interface FusionMeta {
   submodel_weights: Record<string, number>;
   weighted_contributions: Record<string, number>;
   contribution_percentages: Record<string, number>;
+  logit_intercept?: number | null;
 }
 
 interface ReasoningPanelProps {
@@ -67,12 +68,15 @@ const ReasoningPanel = ({
     return undefined;
   }, [originalImageFile]);
 
-  // Show models that agree with the final prediction; if none agree, show all
+  // Show models that agree with the final prediction; if none agree, show all.
+  // The foundation probe's entries are its backbones (parts of one decision),
+  // so they are always all shown.
   const allModelNames = Object.keys(submodels);
+  const isProbe = fusionMeta?.logit_intercept != null;
   const agreeingModels = allModelNames.filter(
     (name) => submodels[name].pred === finalPrediction
   );
-  const modelNames = agreeingModels.length > 0 ? agreeingModels : allModelNames;
+  const modelNames = !isProbe && agreeingModels.length > 0 ? agreeingModels : allModelNames;
   const sortedModelNames = fusionMeta?.contribution_percentages
     ? [...modelNames].sort(
         (a, b) =>
@@ -132,6 +136,8 @@ const ReasoningPanel = ({
     "gradient_field_cnn": "Edge Coherence",
     "gradfield-cnn": "Edge Coherence",
     "gradfield_cnn": "Edge Coherence",
+    "clip-b16": "Semantic Features",
+    "dinov3-b16": "Visual Structure",
   };
 
   const getTabLabel = (modelName: string): string => {

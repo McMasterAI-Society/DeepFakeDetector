@@ -21,6 +21,11 @@ from app.models.wrappers.cnn_transfer_wrapper import CNNTransferWrapper
 from app.models.wrappers.deit_distilled_wrapper import DeiTDistilledWrapper
 from app.models.wrappers.vit_base_wrapper import ViTBaseWrapper
 from app.models.wrappers.gradfield_cnn_wrapper import GradfieldCNNWrapper
+from app.models.wrappers.foundation_probe_wrapper import (
+    BACKBONE_DISPLAY_KEYS,
+    PROBE_TYPE,
+    FoundationProbeWrapper,
+)
 from app.services.hf_hub_service import get_hf_hub_service
 from app.services.model_manifest import (
     SubmodelSpec,
@@ -29,6 +34,7 @@ from app.services.model_manifest import (
     load_local_manifest,
     parse_submodel_entries,
     resolve_fusion_revision,
+    resolve_probe_pins,
 )
 
 logger = get_logger(__name__)
@@ -54,6 +60,11 @@ def get_wrapper_class(config: Dict[str, Any]) -> Type[BaseSubmodelWrapper]:
     model_name = config.get("model_name", "").lower()
     library = config.get("library", "").lower()
     
+    # Foundation-model probe. Checked first: its timm backbone names
+    # (vit_base_patch16_clip_224, ...) would otherwise match the "vit" rule.
+    if model_type == PROBE_TYPE:
+        return FoundationProbeWrapper
+
     # EfficientNet / CNN Transfer
     if "efficientnet" in arch or "cnn-transfer" in model_type or "efficientnet" in model_name:
         return CNNTransferWrapper
@@ -110,6 +121,8 @@ class ModelRegistry:
     
     def __init__(self):
         self._fusion: Optional[BaseFusionWrapper] = None
+        # Set in foundation-probe mode instead of fusion + submodels.
+        self._probe: Optional[FoundationProbeWrapper] = None
         self._submodels: Dict[str, BaseSubmodelWrapper] = {}
         self._is_loaded: bool = False
         # Per-repo serving metadata: requested and resolved revision.
@@ -122,7 +135,122 @@ class ModelRegistry:
     def is_loaded(self) -> bool:
         """Check if models are loaded."""
         return self._is_loaded
-    
+
+    @property
+    def mode(self) -> Optional[str]:
+        """Serving mode once loaded: "foundation-probe" or "legacy-fusion"."""
+        if not self._is_loaded:
+            return None
+        return "foundation-probe" if self._probe is not None else "legacy-fusion"
+
+    def get_probe(self) -> FoundationProbeWrapper:
+        """The loaded foundation probe (foundation-probe mode only)."""
+        if not self._is_loaded or self._probe is None:
+            raise ModelNotLoadedError(message="Foundation probe not loaded")
+        return self._probe
+
+    async def load_production_model(self) -> None:
+        """
+        Load whatever settings.MODEL_MODE selects.
+
+        With MODEL_FALLBACK_TO_LEGACY, a probe that fails to load (e.g. the head
+        repo is not uploaded yet) falls back to the legacy fusion.
+        """
+        if settings.MODEL_MODE == "legacy-fusion":
+            await self.load_from_fusion_repo(settings.HF_FUSION_REPO_ID)
+            return
+        try:
+            await self.load_foundation_probe()
+        except Exception as e:
+            if not settings.MODEL_FALLBACK_TO_LEGACY:
+                raise
+            logger.error(f"Foundation probe failed to load ({e}); falling back to legacy fusion")
+            await self.load_from_fusion_repo(settings.HF_FUSION_REPO_ID)
+
+    async def load_foundation_probe(
+        self,
+        repo_id: Optional[str] = None,
+        revision: Optional[str] = None,
+        local_path: Optional[str] = None,
+        force_reload: bool = False,
+    ) -> None:
+        """
+        Load the foundation-model probe (head repo + pinned upstream backbones).
+
+        Args:
+            repo_id: Head repo. Defaults to settings.HF_PROBE_REPO_ID.
+            revision: Head repo revision. Defaults to settings.HF_PROBE_REVISION,
+                then the manifest's "probe" revision, then main.
+            local_path: Directory with config.json + head.npz to use instead of
+                downloading the head repo. Defaults to settings.PROBE_LOCAL_PATH.
+        """
+        total_t0 = time.perf_counter()
+        async with self._load_lock:
+            if self._is_loaded and not force_reload:
+                logger.info("Models already loaded, skipping")
+                return
+            repo_id = repo_id or settings.HF_PROBE_REPO_ID
+            manifest = load_local_manifest(settings.MODEL_MANIFEST_PATH)
+            probe_pin = resolve_probe_pins(repo_id, manifest)
+            revision = revision or settings.HF_PROBE_REVISION or probe_pin.get("revision")
+            local_path = local_path or settings.PROBE_LOCAL_PATH
+            if local_path:
+                logger.info(f"Loading foundation probe head from local path {local_path}")
+                path = str(local_path)
+                requested, resolved = f"local:{path}", None
+            else:
+                logger.info(f"Loading foundation probe head {repo_id} (revision={revision or 'main'})")
+                path = await asyncio.to_thread(self._hf_service.download_repo, repo_id, revision)
+                requested = revision
+                resolved = self._hf_service.resolve_commit_sha(path, revision)
+
+            config = self._read_config(path)
+            if get_wrapper_class(config) is not FoundationProbeWrapper:
+                raise ConfigurationError(
+                    message=f"{repo_id} config.json is not of type {PROBE_TYPE}",
+                    details={"path": path, "type": config.get("type")},
+                )
+            # Manifest-pinned backbone sources take precedence over config.json.
+            if probe_pin.get("backbones"):
+                config = copy.deepcopy(config)
+                sources = config.setdefault("backbone_sources", {})
+                for key, pin in probe_pin["backbones"].items():
+                    sources[key] = {**(sources.get(key) or {}), **{k: v for k, v in pin.items() if v}}
+
+            wrapper = FoundationProbeWrapper(repo_id=repo_id, config=config, local_path=path)
+            await asyncio.to_thread(wrapper.load)
+
+            self._probe = wrapper
+            self._fusion = None
+            self._submodels = {}
+            self._serving = {repo_id: {"requested_revision": requested, "revision": resolved}}
+            self._manifest_hash = compute_manifest_hash(
+                [self._serving_info(wrapper)] + self._probe_backbone_infos(wrapper)
+            )
+            self._is_loaded = True
+            logger.info(f"Serving manifest_hash={self._manifest_hash} model_version={wrapper.model_version}")
+            logger.info(
+                "phase3 load_foundation_probe_total_duration_seconds=%.3f",
+                time.perf_counter() - total_t0,
+            )
+
+    def _probe_backbone_infos(self, wrapper: FoundationProbeWrapper) -> List[Dict[str, Any]]:
+        """Serving info for the probe's backbones (upstream repo, pinned revision)."""
+        infos = []
+        for bb in wrapper.backbones:
+            src = wrapper.backbone_sources.get(bb.key, {})
+            infos.append({
+                "repo_id": src.get("repo_id") or bb.key,
+                "revision": src.get("revision"),
+                "requested_revision": src.get("revision"),
+                "weights_file": bb.source,
+                "input_size": wrapper.input_size,
+                "name": BACKBONE_DISPLAY_KEYS.get(bb.key, bb.key),
+                "model_type": "backbone",
+                "config": {"timm_name": src.get("timm_name"), "layers": list(bb.layers)},
+            })
+        return infos
+
     async def load_from_fusion_repo(
         self,
         fusion_repo_id: str,
@@ -251,6 +379,7 @@ class ModelRegistry:
             )
             self._fusion = fusion_wrapper
             self._submodels = loaded_submodels
+            self._probe = None
 
             serving = {
                 fusion_repo_id: {
@@ -408,7 +537,17 @@ class ModelRegistry:
             List of model info dictionaries
         """
         models = []
-        
+
+        if self._probe is not None:
+            models.append({
+                **self._serving_info(self._probe),
+                "name": self._probe.name,
+                "model_type": "probe",
+                "config": self._probe.config,
+            })
+            models.extend(self._probe_backbone_infos(self._probe))
+            return models
+
         # Add fusion model
         if self._fusion:
             models.append({
@@ -449,6 +588,9 @@ class ModelRegistry:
                 details={"requested_model": key}
             )
         
+        if self._probe is not None and key in (self._probe.name, self._probe.repo_id, PROBE_TYPE):
+            return self._probe
+
         # Try by name first
         if key in self._submodels:
             return self._submodels[key]
@@ -478,6 +620,8 @@ class ModelRegistry:
         """
         if not self._is_loaded:
             raise ModelNotLoadedError(message="Models not loaded yet")
+        if self._probe is not None:
+            return {self._probe.name: self._probe}
         return self._submodels.copy()
     
     def get_fusion(self) -> BaseFusionWrapper:
@@ -496,10 +640,14 @@ class ModelRegistry:
     
     def get_submodel_names(self) -> List[str]:
         """Get list of loaded submodel names."""
+        if self._probe is not None:
+            return [self._probe.name]
         return list(self._submodels.keys())
     
     def get_fusion_repo_id(self) -> Optional[str]:
-        """Get the fusion repo ID if loaded."""
+        """Get the fusion repo ID if loaded (the head repo in probe mode)."""
+        if self._probe is not None:
+            return self._probe.repo_id
         return self._fusion.repo_id if self._fusion else None
 
 

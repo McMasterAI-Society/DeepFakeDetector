@@ -12,10 +12,14 @@ logger = get_logger(__name__)
 
 
 async def main() -> None:
-    """Download fusion and submodel repositories into the configured HF cache."""
-    logger.info("Starting build-time model prefetch for %s", settings.HF_FUSION_REPO_ID)
+    """Download the production model (MODEL_MODE) into the configured HF cache."""
     registry = get_model_registry()
-    await registry.load_from_fusion_repo(settings.HF_FUSION_REPO_ID, force_reload=True)
+    if settings.MODEL_MODE == "foundation-probe":
+        logger.info("Starting build-time model prefetch for %s", settings.HF_PROBE_REPO_ID)
+        await registry.load_foundation_probe(force_reload=True)
+    else:
+        logger.info("Starting build-time model prefetch for %s", settings.HF_FUSION_REPO_ID)
+        await registry.load_from_fusion_repo(settings.HF_FUSION_REPO_ID, force_reload=True)
     logger.info("Build-time model prefetch completed")
 
 

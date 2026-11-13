@@ -11,9 +11,9 @@ class ModelServingInfo(BaseModel):
 
     repo_id: str = Field(..., description="Hugging Face repository ID")
     name: str = Field(..., description="Short name of the model")
-    model_type: Literal["submodel", "fusion"] = Field(
+    model_type: Literal["submodel", "fusion", "probe", "backbone"] = Field(
         ...,
-        description="Type of model"
+        description="Type of model: fusion/submodel (legacy-fusion mode) or probe/backbone (foundation-probe mode)"
     )
     revision: Optional[str] = Field(
         None,

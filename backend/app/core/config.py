@@ -5,7 +5,7 @@ Application configuration with environment variable support.
 import os
 from functools import lru_cache
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Literal, Optional
 
 
 def _default_hf_cache_dir() -> str:
@@ -46,7 +46,36 @@ class Settings(BaseSettings):
     # (gradient_field_cnn_v3_finetuned.pth first). The deployed fusion was fit on
     # gradient_field_cnn_v2.pth at 224px.
     GRADFIELD_WEIGHTS_FILE: Optional[str] = None
-    
+
+    # Which production model to serve:
+    #   foundation-probe: frozen CLIP-B/16 + DINOv3-B/16 features with a calibrated
+    #                     linear head (HF_PROBE_REPO_ID). Default.
+    #   legacy-fusion:    the 4-submodel logistic-regression fusion
+    #                     (HF_FUSION_REPO_ID), kept for rollback and A/B tests.
+    MODEL_MODE: Literal["foundation-probe", "legacy-fusion"] = "foundation-probe"
+    # If the probe fails to load, load the legacy fusion instead of serving nothing.
+    MODEL_FALLBACK_TO_LEGACY: bool = True
+    # Head repo (config.json + head.npz + licence). Backbones come from their
+    # upstream timm repos at the revisions pinned in its config/the manifest.
+    HF_PROBE_REPO_ID: str = "DeepFakeDetector/fm-probe-clip-dinov3"
+    # Optional head repo revision; else the manifest's "probe" revision, else main.
+    HF_PROBE_REVISION: Optional[str] = None
+    # Local directory with config.json + head.npz to use instead of the head repo
+    # (testing before upload). Nothing is downloaded for the head when set.
+    PROBE_LOCAL_PATH: Optional[str] = None
+    # Directory searched first for <key>.fp16.safetensors / <key>.fp16.pt backbone
+    # weights (e.g. the experiment's weights/); otherwise upstream timm repos.
+    PROBE_BACKBONE_DIR: Optional[str] = None
+    # "auto" (CUDA fp16 when available, else CPU fp32), "cuda" or "cpu".
+    PROBE_DEVICE: str = "auto"
+    # Verdict band edges "lo,hi" on prob_fake: real < lo <= inconclusive < hi <= ai.
+    # Default: config.json "verdict_bands", else 0.2,0.7.
+    PROBE_VERDICT_BANDS: Optional[str] = None
+    # Compute probe heatmaps on /predict when explain=true. Off by default: the
+    # gradient explanation costs ~2.8x a plain prediction (RTX 4060 Laptop,
+    # 0.29 s -> 0.82 s), so heatmaps are served on demand by POST /explain.
+    PROBE_EXPLAIN_ON_PREDICT: bool = False
+
     # Google Gemini API configuration
     GOOGLE_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-2.5-flash"

@@ -70,6 +70,6 @@ async def readiness_check() -> ReadyResponse:
         submodels=[
             model["repo_id"] 
             for model in registry.list_models() 
-            if model["model_type"] == "submodel"
+            if model["model_type"] in ("submodel", "backbone")
         ]
     )

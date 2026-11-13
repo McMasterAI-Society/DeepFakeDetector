@@ -25,6 +25,7 @@ interface FusionMeta {
   submodel_weights: Record<string, number>;
   weighted_contributions: Record<string, number>;
   contribution_percentages: Record<string, number>;
+  logit_intercept?: number | null;
 }
 
 interface PredictionResult {
@@ -33,7 +34,7 @@ interface PredictionResult {
     pred_int: number;
     prob_fake: number;
     heatmap_base64?: string;
-    explainability_type?: "grad_cam" | "attention_rollout";
+    explainability_type?: "grad_cam" | "attention_rollout" | "input_gradient";
     focus_summary?: string;
   };
   fusion_used: boolean;
@@ -42,13 +43,16 @@ interface PredictionResult {
     pred_int: number;
     prob_fake: number;
     heatmap_base64?: string;
-    explainability_type?: "grad_cam" | "attention_rollout";
+    explainability_type?: "grad_cam" | "attention_rollout" | "input_gradient";
     focus_summary?: string;
     contribution_percentage?: number;
   }> | null;
   timing_ms: { total: number; inference?: number; fusion?: number };
   fusion_meta?: FusionMeta | null;
   model_display_info?: Record<string, ModelDisplayInfo> | null;
+  verdict?: "ai" | "inconclusive" | "real" | null;
+  verdict_bands?: number[] | null;
+  model_version?: string | null;
 }
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -116,6 +120,23 @@ const Analyze = () => {
       setError(err instanceof Error ? err.message : "An unexpected error occurred.");
       setState("error");
     }
+  }, [file]);
+
+  // The foundation-probe backend computes heatmaps on demand (POST /explain)
+  // because they cost about 3x a plain prediction.
+  const requestHeatmaps = useCallback(async () => {
+    if (!file || !BASE_URL) return;
+    const formData = new FormData();
+    formData.append("image", file);
+    const res = await fetch(`${BASE_URL}/explain?return_submodels=true`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to compute heatmaps: ${res.status}`);
+    }
+    const data: PredictionResult = await res.json();
+    setResult(data);
   }, [file]);
 
   const requestModelInsight = useCallback(
@@ -231,6 +252,7 @@ const Analyze = () => {
               showSubmodels={true}
               originalFile={file}
               onRequestInsight={requestModelInsight}
+              onRequestHeatmaps={requestHeatmaps}
             />
           )}
         </AnimatePresence>
