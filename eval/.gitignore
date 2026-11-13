@@ -1,0 +1,22 @@
+# Only manifests and results belong in git; never images, weights or caches.
+.cache/
+.artifacts/
+data/
+_bias_probe/
+**/_bias_probe/
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.bmp
+*.tif
+*.tiff
+*.pkl
+*.pth
+*.pt
+*.safetensors
+*.npz
+__pycache__/
+
+# The repo-root .gitignore ignores results/; evaluation results ARE versioned.
+!results/
