@@ -13,12 +13,79 @@ from typing import Any, Dict, Optional, Tuple
 from PIL import Image
 from torchvision import transforms
 
+from app.core.config import settings
 from app.core.errors import InferenceError, ConfigurationError
 from app.core.logging import get_logger
 from app.models.wrappers.base_wrapper import BaseSubmodelWrapper
 from app.services.explainability import heatmap_to_base64, compute_focus_summary
 
 logger = get_logger(__name__)
+
+DEFAULT_INPUT_SIZE = 224
+# Legacy preference order, used when no weights file is configured.
+LEGACY_WEIGHTS_PREFERENCE = [
+    "gradient_field_cnn_v3_finetuned.pth",
+    "gradient_field_cnn_v2.pth",
+    "weights.pt",
+    "model.pth",
+]
+
+
+def _first_int(value: Any) -> Optional[int]:
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else None
+    return int(value) if value is not None else None
+
+
+def resolve_input_size(config: Dict[str, Any], preprocess_config: Dict[str, Any]) -> int:
+    """
+    Input size for the gradient-field CNN.
+
+    Precedence: config["input"]["size"] > preprocess.json "input_size" > 224.
+    """
+    input_cfg = config.get("input")
+    if isinstance(input_cfg, dict):
+        size = _first_int(input_cfg.get("size"))
+        if size:
+            return size
+    size = _first_int(preprocess_config.get("input_size"))
+    if size:
+        return size
+    return DEFAULT_INPUT_SIZE
+
+
+def resolve_weights_path(
+    local_path: str,
+    config: Dict[str, Any],
+    override: Optional[str] = None,
+) -> Path:
+    """
+    Weights file for the gradient-field CNN.
+
+    Precedence: explicit override (GRADFIELD_WEIGHTS_FILE) > config
+    "weights_file" (repo config or fusion manifest) > legacy preference list.
+    An explicitly requested file that does not exist is an error rather than
+    a silent fallback.
+    """
+    requested = override or config.get("weights_file")
+    if requested:
+        candidate = Path(local_path) / requested
+        if not candidate.exists():
+            raise ConfigurationError(
+                message=f"Configured weights file {requested} not found in {local_path}",
+                details={"weights_file": requested, "local_path": str(local_path)},
+            )
+        return candidate
+
+    for fname in LEGACY_WEIGHTS_PREFERENCE:
+        candidate = Path(local_path) / fname
+        if candidate.exists():
+            return candidate
+
+    raise ConfigurationError(
+        message=f"No weights file found in {local_path}",
+        details={"local_path": str(local_path)},
+    )
 
 
 class CompactGradientNet(nn.Module):
@@ -112,7 +179,8 @@ class GradfieldCNNWrapper(BaseSubmodelWrapper):
     """
     Wrapper for Gradient Field CNN model.
     
-    Model expects 256x256 luminance images.
+    Model expects square luminance images; the size comes from the repo config
+    (224 for the published checkpoints).
     Internally computes Sobel gradients and other discriminative features.
     """
     
@@ -136,21 +204,10 @@ class GradfieldCNNWrapper(BaseSubmodelWrapper):
     
     def load(self) -> None:
         """Load the Gradient Field CNN model with trained weights."""
-        # Try different weight file names
-        weights_path = None
-        for fname in ["gradient_field_cnn_v3_finetuned.pth", "gradient_field_cnn_v2.pth", "weights.pt", "model.pth"]:
-            candidate = Path(self.local_path) / fname
-            if candidate.exists():
-                weights_path = candidate
-                break
-        
+        weights_path = resolve_weights_path(
+            self.local_path, self.config, settings.GRADFIELD_WEIGHTS_FILE
+        )
         preprocess_path = Path(self.local_path) / "preprocess.json"
-        
-        if weights_path is None:
-            raise ConfigurationError(
-                message=f"No weights file found in {self.local_path}",
-                details={"repo_id": self.repo_id}
-            )
         
         try:
             # Load preprocessing config
@@ -159,12 +216,13 @@ class GradfieldCNNWrapper(BaseSubmodelWrapper):
                 with open(preprocess_path, "r") as f:
                     preprocess_config = json.load(f)
             
-            # Get input size (default 256 for gradient field)
-            input_size = preprocess_config.get("input_size", 256)
-            if isinstance(input_size, list):
-                input_size = input_size[0]
-            
+            input_size = resolve_input_size(self.config, preprocess_config)
             self._resize = transforms.Resize((input_size, input_size))
+            self.weights_file = weights_path.name
+            self.input_size = input_size
+            logger.info(
+                f"Gradient Field CNN using weights={weights_path.name} input_size={input_size}"
+            )
             
             # Get model parameters from config
             model_params = self.config.get("model_parameters", {})

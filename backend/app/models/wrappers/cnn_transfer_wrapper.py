@@ -63,6 +63,8 @@ class CNNTransferWrapper(BaseSubmodelWrapper):
             input_size = preprocess_config.get("input_size", [224, 224])
             if isinstance(input_size, int):
                 input_size = [input_size, input_size]
+            self.weights_file = weights_path.name
+            self.input_size = int(input_size[0])
             
             normalize_config = preprocess_config.get("normalize", {})
             mean = normalize_config.get("mean", [0.485, 0.456, 0.406])

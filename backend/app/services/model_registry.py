@@ -3,6 +3,7 @@ Model registry for managing loaded models.
 """
 
 import asyncio
+import copy
 import json
 import time
 from pathlib import Path
@@ -21,6 +22,14 @@ from app.models.wrappers.deit_distilled_wrapper import DeiTDistilledWrapper
 from app.models.wrappers.vit_base_wrapper import ViTBaseWrapper
 from app.models.wrappers.gradfield_cnn_wrapper import GradfieldCNNWrapper
 from app.services.hf_hub_service import get_hf_hub_service
+from app.services.model_manifest import (
+    SubmodelSpec,
+    apply_manifest_overrides,
+    compute_manifest_hash,
+    load_local_manifest,
+    parse_submodel_entries,
+    resolve_fusion_revision,
+)
 
 logger = get_logger(__name__)
 
@@ -103,6 +112,9 @@ class ModelRegistry:
         self._fusion: Optional[BaseFusionWrapper] = None
         self._submodels: Dict[str, BaseSubmodelWrapper] = {}
         self._is_loaded: bool = False
+        # Per-repo serving metadata: requested and resolved revision.
+        self._serving: Dict[str, Dict[str, Any]] = {}
+        self._manifest_hash: Optional[str] = None
         self._load_lock = asyncio.Lock()
         self._hf_service = get_hf_hub_service()
     
@@ -114,7 +126,8 @@ class ModelRegistry:
     async def load_from_fusion_repo(
         self,
         fusion_repo_id: str,
-        force_reload: bool = False
+        force_reload: bool = False,
+        fusion_revision: Optional[str] = None,
     ) -> None:
         """
         Load fusion model and all submodels from a fusion repository.
@@ -128,6 +141,9 @@ class ModelRegistry:
         Args:
             fusion_repo_id: Hugging Face repository ID for fusion model
             force_reload: If True, reload even if already loaded
+            fusion_revision: Fusion repo revision. Defaults to
+                settings.HF_FUSION_REVISION, then the local model manifest,
+                then "main".
         """
         total_t0 = time.perf_counter()
 
@@ -136,12 +152,21 @@ class ModelRegistry:
                 logger.info("Models already loaded, skipping")
                 return
             
-            logger.info(f"Loading models from fusion repo: {fusion_repo_id}")
-            
+            manifest = load_local_manifest(settings.MODEL_MANIFEST_PATH)
+            fusion_revision = resolve_fusion_revision(
+                fusion_repo_id,
+                fusion_revision or settings.HF_FUSION_REVISION,
+                manifest,
+            )
+            logger.info(
+                f"Loading models from fusion repo: {fusion_repo_id} "
+                f"(revision={fusion_revision or 'main'})"
+            )
+
             # Download fusion repo
             fusion_download_t0 = time.perf_counter()
             fusion_path = await asyncio.to_thread(
-                self._hf_service.download_repo, fusion_repo_id
+                self._hf_service.download_repo, fusion_repo_id, fusion_revision
             )
             logger.info(
                 "phase3 fusion_repo_download_duration_seconds=%.3f repo_id=%s",
@@ -153,9 +178,13 @@ class ModelRegistry:
             fusion_config = self._read_config(fusion_path)
             logger.info(f"Fusion config: {fusion_config}")
             
-            # Get submodel repo IDs from config
-            submodel_repos = fusion_config.get("submodels", [])
-            if not submodel_repos:
+            # Get submodel specs from config (strings or objects), with
+            # revisions pinned by the local manifest taking precedence.
+            submodel_specs = apply_manifest_overrides(
+                parse_submodel_entries(fusion_config.get("submodels", [])),
+                manifest,
+            )
+            if not submodel_specs:
                 raise ConfigurationError(
                     message="Fusion config does not specify any submodels",
                     details={"repo_id": fusion_repo_id}
@@ -165,9 +194,9 @@ class ModelRegistry:
             # download contention, then load the already-downloaded artifacts in parallel.
             prepare_t0 = time.perf_counter()
             prepared_submodels = []
-            for submodel_repo_id in submodel_repos:
+            for spec in submodel_specs:
                 prepared_submodels.append(
-                    await self._prepare_submodel(submodel_repo_id)
+                    await self._prepare_submodel(spec)
                 )
             logger.info(
                 "phase3 submodel_prepare_total_duration_seconds=%.3f count=%d",
@@ -222,7 +251,27 @@ class ModelRegistry:
             )
             self._fusion = fusion_wrapper
             self._submodels = loaded_submodels
-            
+
+            serving = {
+                fusion_repo_id: {
+                    "requested_revision": fusion_revision,
+                    "revision": self._hf_service.resolve_commit_sha(fusion_path, fusion_revision),
+                }
+            }
+            for prepared in prepared_submodels:
+                serving[prepared["repo_id"]] = {
+                    "requested_revision": prepared["revision"],
+                    "revision": self._hf_service.resolve_commit_sha(
+                        prepared["local_path"], prepared["revision"]
+                    ),
+                }
+            self._serving = serving
+            self._manifest_hash = compute_manifest_hash(
+                [self._serving_info(fusion_wrapper)]
+                + [self._serving_info(w) for w in self._ordered_submodels(prepared_submodels)]
+            )
+            logger.info(f"Serving manifest_hash={self._manifest_hash}")
+
             self._is_loaded = True
             logger.info(
                 "phase3 load_from_fusion_repo_total_duration_seconds=%.3f",
@@ -230,20 +279,31 @@ class ModelRegistry:
             )
             logger.info(f"Successfully loaded {len(self._submodels)} submodels and fusion model")
     
-    async def _prepare_submodel(self, repo_id: str) -> Dict[str, Any]:
+    async def _prepare_submodel(self, spec: SubmodelSpec) -> Dict[str, Any]:
         """
         Download a submodel repository and prepare metadata for loading.
 
         This stays sequential to avoid concurrent Hugging Face download issues.
         """
-        logger.info(f"Preparing submodel: {repo_id}")
+        repo_id = spec.repo_id
+        logger.info(f"Preparing submodel: {repo_id} (revision={spec.revision or 'main'})")
         prepare_t0 = time.perf_counter()
 
         local_path = await asyncio.to_thread(
-            self._hf_service.download_repo, repo_id
+            self._hf_service.download_repo, repo_id, spec.revision
         )
         config = self._read_config(local_path)
         wrapper_class = get_wrapper_class(config)
+
+        # Fusion-manifest overrides reach the wrapper through its config.
+        if spec.weights_file or spec.input_size:
+            config = copy.deepcopy(config)
+            if spec.weights_file:
+                config["weights_file"] = spec.weights_file
+            if spec.input_size:
+                input_cfg = config.get("input")
+                config["input"] = dict(input_cfg) if isinstance(input_cfg, dict) else {}
+                config["input"]["size"] = spec.input_size
 
         logger.info(
             "phase3 prepare_submodel_duration_seconds=%.3f repo_id=%s",
@@ -253,6 +313,8 @@ class ModelRegistry:
 
         return {
             "repo_id": repo_id,
+            "revision": spec.revision,
+            "spec": spec,
             "local_path": local_path,
             "config": config,
             "wrapper_class": wrapper_class,
@@ -279,6 +341,19 @@ class ModelRegistry:
         )
         await asyncio.to_thread(wrapper.load)
         logger.info(f"Loaded submodel: {wrapper.name}")
+
+        spec: Optional[SubmodelSpec] = prepared_submodel.get("spec")
+        if spec is not None:
+            if spec.weights_file and wrapper.weights_file not in (None, spec.weights_file):
+                logger.warning(
+                    f"{repo_id}: manifest asks for weights {spec.weights_file} "
+                    f"but wrapper loaded {wrapper.weights_file}"
+                )
+            if spec.input_size and wrapper.input_size not in (None, spec.input_size):
+                logger.warning(
+                    f"{repo_id}: manifest asks for input_size {spec.input_size} "
+                    f"but wrapper uses {wrapper.input_size}"
+                )
         logger.info(
             "phase3 load_prepared_submodel_duration_seconds=%.3f repo_id=%s",
             time.perf_counter() - load_t0,
@@ -305,6 +380,26 @@ class ModelRegistry:
         with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
     
+    def _ordered_submodels(self, prepared_submodels: List[Dict[str, Any]]) -> List[BaseSubmodelWrapper]:
+        """Loaded submodel wrappers in fusion config order."""
+        by_repo = {w.repo_id: w for w in self._submodels.values()}
+        return [by_repo[p["repo_id"]] for p in prepared_submodels if p["repo_id"] in by_repo]
+
+    def _serving_info(self, wrapper: Any) -> Dict[str, Any]:
+        """Repo, revision and artifact details of a loaded wrapper."""
+        serving = self._serving.get(wrapper.repo_id, {})
+        return {
+            "repo_id": wrapper.repo_id,
+            "revision": serving.get("revision") or serving.get("requested_revision"),
+            "requested_revision": serving.get("requested_revision"),
+            "weights_file": getattr(wrapper, "weights_file", None),
+            "input_size": getattr(wrapper, "input_size", None),
+        }
+
+    def get_manifest_hash(self) -> Optional[str]:
+        """Hash of the served repos, revisions and artifacts; None until loaded."""
+        return self._manifest_hash if self._is_loaded else None
+
     def list_models(self) -> List[Dict[str, Any]]:
         """
         List all loaded models.
@@ -317,7 +412,7 @@ class ModelRegistry:
         # Add fusion model
         if self._fusion:
             models.append({
-                "repo_id": self._fusion.repo_id,
+                **self._serving_info(self._fusion),
                 "name": self._fusion.name,
                 "model_type": "fusion",
                 "config": self._fusion.config
@@ -326,7 +421,7 @@ class ModelRegistry:
         # Add submodels
         for name, wrapper in self._submodels.items():
             models.append({
-                "repo_id": wrapper.repo_id,
+                **self._serving_info(wrapper),
                 "name": name,
                 "model_type": "submodel",
                 "config": wrapper.config
