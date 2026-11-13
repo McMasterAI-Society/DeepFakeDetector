@@ -82,7 +82,9 @@ HF Spaces deploy variables (used by [backend/deploy-to-hf.sh](deploy-to-hf.sh)):
 - `GET /health` - service health
 - `GET /ready` - readiness (includes model load state)
 - `GET /models` - loaded model metadata
-- `POST /predict` - real/fake prediction
+- `POST /predict` - real/fake prediction (form field `consent_store_image`, default false; returns `prediction_id`)
+- `POST /feedback` - user feedback on a prediction (`prediction_id`, `user_knows_truth`, `user_label`, `source_note`)
+- `POST /admin/login`, `GET /admin/*` - admin dashboard API (bearer token; disabled unless `ADMIN_PASSWORD_HASH` is set)
 - `GET /docs` - Swagger UI
 
 Example:
@@ -210,6 +212,26 @@ Notes:
 
 - Scripts require authenticated HF CLI (`hf auth login`).
 - Set `HF_BUCKET_DELETE=true` to mirror local to remote (deletes remote files not present locally).
+
+## Prediction Store, Feedback and Admin
+
+- Every prediction stores metadata only (verdict, probabilities, heatmaps, SHA-256 of the upload,
+  salted hash of the client IP) in SQLite at `DATA_DIR/app.db`.
+- The image itself is stored **only** when the user ticks the consent box. It is re-encoded to WebP
+  with all metadata (EXIF, ICC, XMP) removed, under `DATA_DIR/uploads/YYYY-MM/<id>.webp`.
+- Rows, feedback and images older than `RETENTION_DAYS` (default 90) are purged at startup and every
+  `PURGE_INTERVAL_HOURS`. Admins can delete single records.
+- `DATA_DIR` defaults to `/data` when writable, so **enable persistent storage on the Space**;
+  otherwise data falls back to a local folder and is lost on restart.
+
+Admin setup:
+
+```bash
+python -m app.scripts.hash_admin_password --token-secret
+```
+
+Add the printed `ADMIN_PASSWORD_HASH` and `ADMIN_TOKEN_SECRET` as Space secrets. Behind the HF proxy set
+`TRUSTED_PROXIES=*` so rate limits apply per real client IP. The dashboard is at `/admin` on the frontend.
 
 ## Deploy to Railway
 

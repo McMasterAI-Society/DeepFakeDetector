@@ -2,10 +2,13 @@
 Prediction routes.
 """
 
+import asyncio
 import base64
-from typing import Optional
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
+)
 
 from app.core.errors import (
     DeepFakeDetectorError,
@@ -15,6 +18,7 @@ from app.core.errors import (
     ModelNotFoundError,
     ModelNotLoadedError
 )
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.schemas.predict import (
     PredictResponse,
@@ -31,10 +35,88 @@ from app.services.fusion_service import get_fusion_service
 from app.services.preprocess_service import get_preprocess_service
 from app.services.model_registry import get_model_registry
 from app.services.llm_service import get_llm_service, get_model_display_info, MODEL_DISPLAY_INFO
+from app.services.rate_limit import get_client_ip, rate_limit
+from app.services.store import get_store
 from app.utils.timing import Timer
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["predict"])
+
+_EXPLAIN_KEYS = ("heatmap_base64", "explainability_type", "focus_summary")
+
+
+def _manifest_id() -> Optional[str]:
+    """Identifier of the serving model set, recorded with each prediction."""
+    try:
+        registry = get_model_registry()
+        manifest_hash = getattr(registry, "manifest_hash", None)
+        if isinstance(manifest_hash, str) and manifest_hash:
+            return manifest_hash
+        return registry.get_fusion_repo_id()
+    except Exception:
+        return None
+
+
+async def _persist_prediction(
+    *,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    image_bytes: bytes,
+    final: Dict[str, Any],
+    outputs: Dict[str, Dict[str, Any]],
+    contributions: Dict[str, float],
+    fusion_used: bool,
+    consent_store_image: bool,
+    latency_ms: Optional[int],
+) -> Optional[str]:
+    """
+    Record prediction metadata (always) and queue the consented image write.
+    Never raises: a store failure must not break /predict.
+    """
+    try:
+        store = await asyncio.to_thread(get_store)
+        if store is None:
+            return None
+        submodels = {
+            name: {
+                "pred": out.get("pred"),
+                "prob_fake": out.get("prob_fake"),
+                "contribution_percentage": contributions.get(name),
+            }
+            for name, out in outputs.items()
+        }
+        # Heatmaps can reveal the outline of the subject, so they are stored
+        # only with the same consent as the image itself.
+        explain_keys = (
+            _EXPLAIN_KEYS
+            if consent_store_image
+            else tuple(k for k in _EXPLAIN_KEYS if k != "heatmap_base64")
+        )
+        explain = {
+            name: {k: out[k] for k in explain_keys if out.get(k) is not None}
+            for name, out in outputs.items()
+        }
+        prediction_id = await asyncio.to_thread(
+            store.record_prediction,
+            image_bytes=image_bytes,
+            final_pred=final["pred"],
+            final_prob=final["prob_fake"],
+            fusion_used=fusion_used,
+            submodels=submodels,
+            explain=explain,
+            variant=settings.PREDICTION_VARIANT,
+            latency_ms=latency_ms,
+            client_ip=get_client_ip(request),
+            manifest_hash=_manifest_id(),
+            consent_store_image=consent_store_image,
+        )
+        if consent_store_image:
+            # Runs after the response is sent (in the threadpool).
+            background_tasks.add_task(store.save_consented_image, prediction_id, image_bytes)
+        return prediction_id
+    except Exception as e:
+        logger.warning(f"Failed to record prediction: {e}")
+        return None
 
 
 @router.post(
@@ -45,11 +127,20 @@ router = APIRouter(tags=["predict"])
     responses={
         400: {"model": ErrorResponse, "description": "Invalid image or request"},
         404: {"model": ErrorResponse, "description": "Model not found"},
+        429: {"description": "Rate limit exceeded"},
         500: {"model": ErrorResponse, "description": "Inference error"}
-    }
+    },
+    dependencies=[Depends(rate_limit("predict"))],
 )
 async def predict(
+    request: Request,
+    background_tasks: BackgroundTasks,
     image: UploadFile = File(..., description="Image file to analyze"),
+    consent_store_image: bool = Form(
+        False,
+        description="User explicitly consents to storing this image for research. "
+                    "When false (default) no image bytes are written to disk."
+    ),
     use_fusion: bool = Query(
         True,
         description="Use fusion model (majority vote) across all submodels"
@@ -133,7 +224,7 @@ async def predict(
             }
             
             # Build response
-            return PredictResponse(
+            response = PredictResponse(
                 final=PredictionResult(
                     pred=final_result["pred"],
                     pred_int=final_result["pred_int"],
@@ -156,6 +247,18 @@ async def predict(
                 model_display_info=model_display_info if should_return_submodels else None,
                 timing_ms=TimingInfo(**timer.get_timings())
             )
+            response.prediction_id = await _persist_prediction(
+                request=request,
+                background_tasks=background_tasks,
+                image_bytes=image_bytes,
+                final=final_result,
+                outputs=submodel_outputs,
+                contributions=contribution_percentages,
+                fusion_used=True,
+                consent_store_image=consent_store_image,
+                latency_ms=timer.get_timings().get("total"),
+            )
+            return response
         
         else:
             # Single model prediction
@@ -170,7 +273,7 @@ async def predict(
             
             timer.stop_total()
             
-            return PredictResponse(
+            response = PredictResponse(
                 final=PredictionResult(
                     pred=result["pred"],
                     pred_int=result["pred_int"],
@@ -183,6 +286,18 @@ async def predict(
                 submodels=None,
                 timing_ms=TimingInfo(**timer.get_timings())
             )
+            response.prediction_id = await _persist_prediction(
+                request=request,
+                background_tasks=background_tasks,
+                image_bytes=image_bytes,
+                final=result,
+                outputs={model_key: result},
+                contributions={},
+                fusion_used=False,
+                consent_store_image=consent_store_image,
+                latency_ms=timer.get_timings().get("total"),
+            )
+            return response
     
     except ImageProcessingError as e:
         logger.warning(f"Image processing error: {e.message}")
@@ -220,19 +335,49 @@ async def predict(
         )
 
 
-@router.post("/explain-model", response_model=ExplainModelResponse)
+@router.post(
+    "/explain-model",
+    response_model=ExplainModelResponse,
+    dependencies=[Depends(rate_limit("explain"))],
+)
 async def explain_model(
     image: UploadFile = File(...),
     model_name: str = Form(...),
     prob_fake: float = Form(...),
     contribution_percentage: float = Form(None),
     heatmap_base64: str = Form(None),
-    focus_summary: str = Form(None)
+    focus_summary: str = Form(None),
+    prediction_id: Optional[str] = Form(None, max_length=64),
 ):
     """
     Generate an on-demand LLM explanation for a single model's prediction.
     This endpoint is token-efficient - only called when user requests insights.
+
+    When prediction_id is given and known, the stored server-side values for
+    the model (probability, heatmap, focus summary, contribution) replace the
+    client-supplied ones, and the generated insight is saved with the record.
     """
+    store = None
+    if prediction_id:
+        record = None
+        try:
+            store = await asyncio.to_thread(get_store)
+            if store is not None:
+                record = await asyncio.to_thread(store.get_prediction, prediction_id)
+        except Exception as e:
+            logger.warning(f"Prediction lookup failed for explain-model: {e}")
+        stored_sub = (record or {}).get("submodels", {}).get(model_name)
+        if stored_sub is not None:
+            stored_explain = record.get("explain", {}).get(model_name, {})
+            if stored_sub.get("prob_fake") is not None:
+                prob_fake = stored_sub["prob_fake"]
+            if stored_sub.get("contribution_percentage") is not None:
+                contribution_percentage = stored_sub["contribution_percentage"]
+            heatmap_base64 = stored_explain.get("heatmap_base64", heatmap_base64)
+            focus_summary = stored_explain.get("focus_summary", focus_summary)
+        else:
+            store = None
+
     try:
         # Read and validate image
         image_bytes = await image.read()
@@ -266,15 +411,21 @@ async def explain_model(
                 detail="Failed to generate explanation from LLM"
             )
         
-        return ExplainModelResponse(
-            model_name=model_name,
-            insight=SingleModelInsight(
-                key_finding=result["key_finding"],
-                what_model_saw=result["what_model_saw"],
-                important_regions=result["important_regions"],
-                confidence_qualifier=result["confidence_qualifier"]
-            )
+        insight = SingleModelInsight(
+            key_finding=result["key_finding"],
+            what_model_saw=result["what_model_saw"],
+            important_regions=result["important_regions"],
+            confidence_qualifier=result["confidence_qualifier"]
         )
+        if store is not None and prediction_id:
+            try:
+                await asyncio.to_thread(
+                    store.add_llm_insight, prediction_id, model_name, insight.model_dump()
+                )
+            except Exception as e:
+                logger.warning(f"Failed to save LLM insight: {e}")
+
+        return ExplainModelResponse(model_name=model_name, insight=insight)
         
     except HTTPException:
         raise

@@ -7,7 +7,9 @@ import ResultsPanel from "@/components/ResultsPanel";
 import ResultsSkeleton from "@/components/ResultsSkeleton";
 import AnalyzingOverlay from "@/components/AnalyzingOverlay";
 import DemoImages from "@/components/DemoImages";
+import FeedbackCard from "@/components/FeedbackCard";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { SingleModelInsight } from "@/components/ModelTab";
 
 type AppState = "idle" | "ready" | "loading" | "success" | "error";
@@ -49,6 +51,7 @@ interface PredictionResult {
   timing_ms: { total: number; inference?: number; fusion?: number };
   fusion_meta?: FusionMeta | null;
   model_display_info?: Record<string, ModelDisplayInfo> | null;
+  prediction_id?: string | null;
 }
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -58,9 +61,11 @@ const Analyze = () => {
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<PredictionResult | null>(null);
   const [error, setError] = useState<string>("");
+  const [consentStoreImage, setConsentStoreImage] = useState(false);
 
   const handleFileSelect = useCallback((f: File | null) => {
     setFile(f);
+    setConsentStoreImage(false);
     setState(f ? "ready" : "idle");
     setResult(null);
     setError("");
@@ -70,6 +75,7 @@ const Analyze = () => {
     const handler = (e: Event) => {
       const file = (e as CustomEvent).detail as File;
       setFile(file);
+      setConsentStoreImage(false);
       setState("ready");
       setResult(null);
       setError("");
@@ -98,6 +104,7 @@ const Analyze = () => {
 
     const formData = new FormData();
     formData.append("image", file);
+    formData.append("consent_store_image", consentStoreImage ? "true" : "false");
 
     try {
       const res = await fetch(`${BASE_URL}/predict?${params.toString()}`, {
@@ -105,6 +112,9 @@ const Analyze = () => {
         body: formData,
       });
 
+      if (res.status === 429) {
+        throw new Error("Too many requests. Please wait a moment and try again.");
+      }
       if (!res.ok) {
         throw new Error(`Server error: ${res.status} ${res.statusText}`);
       }
@@ -116,7 +126,7 @@ const Analyze = () => {
       setError(err instanceof Error ? err.message : "An unexpected error occurred.");
       setState("error");
     }
-  }, [file]);
+  }, [file, consentStoreImage]);
 
   const requestModelInsight = useCallback(
     async (
@@ -141,6 +151,9 @@ const Analyze = () => {
       if (focusSummary) {
         formData.append("focus_summary", focusSummary);
       }
+      if (result?.prediction_id) {
+        formData.append("prediction_id", result.prediction_id);
+      }
 
       const res = await fetch(`${BASE_URL}/explain-model`, {
         method: "POST",
@@ -154,7 +167,7 @@ const Analyze = () => {
       const data = await res.json();
       return data.insight as SingleModelInsight;
     },
-    [file]
+    [file, result]
   );
 
   const isLoading = state === "loading";
@@ -168,6 +181,25 @@ const Analyze = () => {
           className="rounded-xl border border-border bg-card p-4 sm:p-6 space-y-5 shadow-sm"
         >
           <UploadDropzone file={file} onFileSelect={handleFileSelect} disabled={isLoading} />
+
+          <div className="flex items-start gap-2.5">
+            <Checkbox
+              id="consent-store-image"
+              checked={consentStoreImage}
+              onCheckedChange={(v) => setConsentStoreImage(v === true)}
+              disabled={isLoading}
+              className="mt-0.5"
+            />
+            <label htmlFor="consent-store-image" className="text-xs text-muted-foreground leading-relaxed cursor-pointer">
+              <span className="text-foreground font-medium">
+                Help improve the detector — store this image for research (deleted after 90 days)
+              </span>
+              <br />
+              Optional. If unchecked, we keep only the result and an anonymous fingerprint of the
+              image, never the image itself. Stored images have their metadata (EXIF, location)
+              removed and can be deleted on request.
+            </label>
+          </div>
 
           <Button
             onClick={analyze}
@@ -234,6 +266,10 @@ const Analyze = () => {
             />
           )}
         </AnimatePresence>
+
+        {state === "success" && result?.prediction_id && BASE_URL && (
+          <FeedbackCard key={result.prediction_id} predictionId={result.prediction_id} baseUrl={BASE_URL} />
+        )}
       </div>
     </AppLayout>
   );
