@@ -1,0 +1,163 @@
+name: Model update PR
+
+# Opens (or updates) a PR that pins a new HF model revision in backend/model-manifest.json.
+# Triggered by tools/hf-webhook-relay (repository_dispatch) or by hand. Never deploys by itself:
+# merging the PR runs deploy-space.yml, which still waits for production approval.
+on:
+  repository_dispatch:
+    types: [hf-model-updated]
+  workflow_dispatch:
+    inputs:
+      repo_id:
+        description: Model repo listed in backend/model-manifest.json (e.g. DeepFakeDetector/vit-base-final)
+        required: true
+        type: string
+      revision:
+        description: Commit sha, branch or tag (blank = current main, resolved to a sha)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: model-update-${{ github.event.client_payload.repo_id || inputs.repo_id }}
+  cancel-in-progress: false
+
+env:
+  BASE_BRANCH: development
+  HF_HUB_DISABLE_TELEMETRY: "1"
+
+jobs:
+  bump:
+    name: Bump pinned revision
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      REPO_ID: ${{ github.event.client_payload.repo_id || inputs.repo_id }}
+      REVISION: ${{ github.event.client_payload.revision || inputs.revision }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BASE_BRANCH }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements*.txt
+            eval/requirements*.txt
+
+      - name: Install huggingface_hub
+        run: pip install "huggingface_hub>=0.30,<1.0"
+
+      - name: Update manifest
+        id: bump
+        run: python .github/scripts/bump_manifest.py --repo-id "$REPO_ID" --revision "$REVISION"
+
+      - name: Branch name
+        id: branch
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          NEW_REVISION: ${{ steps.bump.outputs.revision }}
+        run: |
+          slug="$(printf '%s' "$REPO_ID" | tr '/' '-' | tr -c 'A-Za-z0-9._-' '-')"
+          echo "name=model-update/${slug}" >> "$GITHUB_OUTPUT"
+          echo "short=${NEW_REVISION:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Check for eval harness
+        id: harness
+        if: steps.bump.outputs.changed == 'true'
+        run: |
+          if [ -f eval/run_eval.py ] || [ -f eval/run_eval/__init__.py ] || [ -f eval/run_eval/__main__.py ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::eval/run_eval not found on ${BASE_BRANCH}; skipping eval."
+          fi
+
+      - name: Install eval dependencies
+        if: steps.harness.outputs.present == 'true'
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r backend/requirements.txt
+          if [ -f eval/requirements.txt ]; then pip install -r eval/requirements.txt; fi
+
+      - name: Run eval
+        id: eval
+        if: steps.harness.outputs.present == 'true'
+        continue-on-error: true
+        env:
+          MODEL_MANIFEST: backend/model-manifest.json
+          MODEL_MANIFEST_PATH: ${{ github.workspace }}/backend/model-manifest.json
+          EVAL_OUTPUT_DIR: eval-output
+          EVAL_ARGS: ${{ vars.EVAL_ARGS || '--suite core' }}
+        run: |
+          mkdir -p "$EVAL_OUTPUT_DIR"
+          set -o pipefail
+          # shellcheck disable=SC2086
+          python -m eval.run_eval $EVAL_ARGS 2>&1 | tee "$EVAL_OUTPUT_DIR/stdout.txt"
+
+      - name: Open pull request
+        id: pr
+        if: steps.bump.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          # A PAT or GitHub App token lets CI run on the PR; GITHUB_TOKEN-created PRs do not trigger workflows.
+          token: ${{ secrets.MODEL_UPDATE_TOKEN || secrets.GITHUB_TOKEN }}
+          base: ${{ env.BASE_BRANCH }}
+          branch: ${{ steps.branch.outputs.name }}
+          add-paths: backend/model-manifest.json
+          commit-message: "chore(models): pin ${{ steps.bump.outputs.repo_id }} to ${{ steps.branch.outputs.short }}"
+          title: "chore(models): pin ${{ steps.bump.outputs.repo_id }} to ${{ steps.branch.outputs.short }}"
+          labels: model-update
+          delete-branch: true
+          body: |
+            Pins `${{ steps.bump.outputs.repo_id }}` in `backend/model-manifest.json`.
+
+            | | |
+            |---|---|
+            | Repo | [`${{ steps.bump.outputs.repo_id }}`](https://huggingface.co/${{ steps.bump.outputs.repo_id }}) |
+            | Old revision | `${{ steps.bump.outputs.old_revision || 'main (unpinned)' }}` |
+            | New revision | [`${{ steps.bump.outputs.revision }}`](https://huggingface.co/${{ steps.bump.outputs.repo_id }}/commit/${{ steps.bump.outputs.revision }}) |
+            | Trigger | `${{ github.event_name }}` |
+
+            Eval results are posted as a comment when the `eval/` harness is present.
+
+            Merging this PR runs **Deploy backend to HF Space**, which waits for approval on the `production` environment. Check the eval comment against the promotion gate before approving.
+
+      - name: Post eval comment
+        if: steps.harness.outputs.present == 'true' && always() && steps.pr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.pull-request-number }}
+          EVAL_OUTCOME: ${{ steps.eval.outcome }}
+          EVAL_ARGS: ${{ vars.EVAL_ARGS || '--suite core' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "### Eval: \`python -m eval.run_eval $EVAL_ARGS\` (${EVAL_OUTCOME})"
+            echo ""
+            report="$(find eval-output -maxdepth 2 -name '*.md' 2>/dev/null | sort | head -n1)"
+            if [ -n "$report" ]; then
+              head -c 60000 "$report"
+            else
+              echo '```'
+              tail -n 200 eval-output/stdout.txt 2>/dev/null | head -c 60000 || echo "(no output)"
+              echo '```'
+            fi
+            echo ""
+            echo "[Workflow run]($RUN_URL)"
+          } > comment.md
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file comment.md
+
+      - name: Upload eval output
+        if: steps.harness.outputs.present == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-output
+          path: eval-output/
+          if-no-files-found: ignore
