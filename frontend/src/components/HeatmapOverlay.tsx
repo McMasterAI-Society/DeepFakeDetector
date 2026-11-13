@@ -15,7 +15,9 @@ interface HeatmapOverlayProps {
   /** Original image (optional, for overlay mode) */
   originalImageUrl?: string;
   /** Type of explainability method used */
-  explainabilityType?: "grad_cam" | "attention_rollout";
+  explainabilityType?: "grad_cam" | "attention_rollout" | "signed_grad_cam";
+  /** Optional signed map (red = evidence for fake, blue = evidence for real) */
+  signedHeatmapBase64?: string;
   /** Model name for display */
   modelName: string;
 }
@@ -24,14 +26,17 @@ const HeatmapOverlay = ({
   heatmapBase64,
   originalImageUrl,
   explainabilityType,
+  signedHeatmapBase64,
   modelName,
 }: HeatmapOverlayProps) => {
   const [showOverlay, setShowOverlay] = useState(true);
   const [opacity, setOpacity] = useState(0.6);
+  const [showSigned, setShowSigned] = useState(false);
 
-  const heatmapSrc = `data:image/png;base64,${heatmapBase64}`;
-  
-  const methodLabel = explainabilityType === "grad_cam" 
+  const signed = showSigned && !!signedHeatmapBase64;
+  const heatmapSrc = `data:image/png;base64,${signed ? signedHeatmapBase64 : heatmapBase64}`;
+
+  const methodLabel = explainabilityType === "grad_cam" || explainabilityType === "signed_grad_cam"
     ? "Grad-CAM" 
     : explainabilityType === "attention_rollout" 
     ? "Attention Rollout" 
@@ -39,8 +44,10 @@ const HeatmapOverlay = ({
 
   const methodDescription = explainabilityType === "grad_cam"
     ? "Highlights CNN regions most influential for the prediction"
+    : explainabilityType === "signed_grad_cam"
+    ? "Red regions push toward fake, blue regions push toward real"
     : explainabilityType === "attention_rollout"
-    ? "Shows aggregated transformer attention across layers"
+    ? "Shows class-specific transformer relevance across layers"
     : "Visualization of model focus areas";
 
   return (
@@ -60,7 +67,17 @@ const HeatmapOverlay = ({
             </Tooltip>
           </TooltipProvider>
         </div>
-        
+
+        {signedHeatmapBase64 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowSigned(!showSigned)}
+            className="h-6 px-2 text-xs"
+          >
+            {showSigned ? "Intensity" : "Fake/real evidence"}
+          </Button>
+        )}
         {originalImageUrl && (
           <Button
             variant="ghost"
@@ -113,9 +130,11 @@ const HeatmapOverlay = ({
         {/* Color scale legend */}
         <div className="absolute bottom-1 right-1 flex items-center gap-1 bg-background/80 rounded px-1 py-0.5">
           <div className="w-12 h-2 rounded-sm" style={{
-            background: "linear-gradient(to right, #30123b, #28459f, #1fa087, #8ed85c, #f7e225)"
+            background: signed
+              ? "linear-gradient(to right, #053061, #92c5de, #f7f7f7, #f4a582, #67001f)"
+              : "linear-gradient(to right, #30123b, #28459f, #1fa087, #8ed85c, #f7e225)"
           }} />
-          <span className="text-[8px] text-foreground">Low → High</span>
+          <span className="text-[8px] text-foreground">{signed ? "Real ← → Fake" : "Low → High"}</span>
         </div>
       </div>
 

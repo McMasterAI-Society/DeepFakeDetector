@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 from PIL import Image
 from torchvision import transforms
 
@@ -21,7 +21,13 @@ except ImportError:
 from app.core.errors import InferenceError, ConfigurationError
 from app.core.logging import get_logger
 from app.models.wrappers.base_wrapper import BaseSubmodelWrapper
-from app.services.explainability import attention_rollout, heatmap_to_base64, compute_focus_summary
+from app.services.explainability import (
+    TRANSFORMER_METHODS,
+    compute_focus_summary,
+    compute_transformer_attribution,
+    heatmap_to_base64,
+    predicted_class,
+)
 
 logger = get_logger(__name__)
 
@@ -137,6 +143,27 @@ class DeiTDistilledWrapper(BaseSubmodelWrapper):
                 details={"repo_id": self.repo_id, "error": str(e)}
             )
     
+    DEFAULT_EXPLAIN_METHOD = "grad_rollout"
+
+    def _attribution_settings(self) -> Dict[str, Any]:
+        backbone = self._model
+        num_prefix = int(getattr(backbone, "num_prefix_tokens", 2))
+        # The DeiT head averages the cls-token and distillation-token heads,
+        # so relevance is read from both rows.
+        readout = list(range(min(num_prefix, 2)))
+        grid = getattr(getattr(backbone, "patch_embed", None), "grid_size", None)
+        method = str(self.config.get("explain_method", self.DEFAULT_EXPLAIN_METHOD)).lower()
+        if method not in TRANSFORMER_METHODS:
+            logger.warning(f"Unknown explain_method {method!r}; using {self.DEFAULT_EXPLAIN_METHOD}")
+            method = self.DEFAULT_EXPLAIN_METHOD
+        return {
+            "blocks": list(backbone.blocks),
+            "num_prefix_tokens": num_prefix,
+            "readout_tokens": readout,
+            "grid_size": tuple(grid) if grid is not None else None,
+            "method": method,
+        }
+
     def _run_inference(
         self,
         image_tensor: torch.Tensor,
@@ -144,97 +171,40 @@ class DeiTDistilledWrapper(BaseSubmodelWrapper):
     ) -> Dict[str, Any]:
         """Run model inference on preprocessed tensor."""
         heatmap = None
-        
+        method = None
+
         if explain:
-            # Collect attention weights from all blocks
-            attentions: List[torch.Tensor] = []
-            handles = []
-            
-            # Hook into attention modules to capture weights
-            # DeiT blocks structure: blocks[i].attn
-            def create_attn_hook():
-                stored_attn = []
-                
-                def hook(module, inputs, outputs):
-                    # Get q, k from the module's forward computation
-                    # inputs[0] is x of shape [B, N, C]
-                    x = inputs[0]
-                    B, N, C = x.shape
-                    
-                    # Access the attention module's parameters
-                    qkv = module.qkv(x)  # [B, N, 3*dim]
-                    qkv = qkv.reshape(B, N, 3, module.num_heads, C // module.num_heads)
-                    qkv = qkv.permute(2, 0, 3, 1, 4)  # [3, B, heads, N, dim_head]
-                    q, k, v = qkv[0], qkv[1], qkv[2]
-                    
-                    # Compute attention weights
-                    scale = (C // module.num_heads) ** -0.5
-                    attn = (q @ k.transpose(-2, -1)) * scale
-                    attn = attn.softmax(dim=-1)  # [B, heads, N, N]
-                    
-                    # Average over heads
-                    attn_avg = attn.mean(dim=1)  # [B, N, N]
-                    stored_attn.append(attn_avg.detach())
-                
-                return hook, stored_attn
-            
-            all_stored_attns = []
-            for block in self._model.blocks:
-                hook_fn, stored = create_attn_hook()
-                all_stored_attns.append(stored)
-                handle = block.attn.register_forward_hook(hook_fn)
-                handles.append(handle)
-            
-            try:
-                with torch.no_grad():
-                    logits = self._model(image_tensor)
-                    probs = F.softmax(logits, dim=1)
-                    prob_fake = probs[0, 1].item()
-                    pred_int = 1 if prob_fake >= self._threshold else 0
-                
-                # Get attention from hooks
-                attention_list = [stored[0] for stored in all_stored_attns if len(stored) > 0]
-                
-                if attention_list:
-                    # Stack: [num_layers, B, N, N]
-                    attention_stack = torch.stack(attention_list, dim=0)
-                    # Compute rollout - returns (grid_size, grid_size) heatmap
-                    attention_map = attention_rollout(
-                        attention_stack[:, 0],  # [num_layers, N, N]
-                        head_fusion="mean",  # Already averaged
-                        discard_ratio=0.0,
-                        num_prefix_tokens=2  # DeiT has CLS + distillation token
-                    )  # Returns (14, 14) for DeiT-Base
-                    
-                    # Resize to image size
-                    from PIL import Image as PILImage
-                    heatmap_img = PILImage.fromarray(
-                        (attention_map * 255).astype(np.uint8)
-                    ).resize((224, 224), PILImage.BILINEAR)
-                    heatmap = np.array(heatmap_img).astype(np.float32) / 255.0
-                    
-            finally:
-                for handle in handles:
-                    handle.remove()
+            # Logits and class-specific attribution from one forward(+backward)
+            attribution = compute_transformer_attribution(
+                self._model,
+                image_tensor,
+                target_class=lambda lg: predicted_class(lg, self._threshold),
+                output_size=(224, 224),
+                **self._attribution_settings(),
+            )
+            logits = attribution.logits
+            heatmap = attribution.heatmap
+            method = attribution.method
         else:
             with torch.no_grad():
-                # In eval mode, DeiT returns single tensor
                 logits = self._model(image_tensor)
-                probs = F.softmax(logits, dim=1)
-                prob_fake = probs[0, 1].item()
-                pred_int = 1 if prob_fake >= self._threshold else 0
-        
+
+        probs = F.softmax(logits, dim=1)
+        prob_fake = probs[0, 1].item()
+        pred_int = 1 if prob_fake >= self._threshold else 0
+
         result = {
-            "logits": logits[0].cpu().numpy().tolist(),
+            "logits": logits[0].detach().cpu().numpy().tolist(),
             "prob_fake": prob_fake,
             "pred_int": pred_int
         }
-        
+
         if heatmap is not None:
             result["heatmap"] = heatmap
-        
+            result["explainability_method"] = method
+
         return result
-    
+
     def predict(
         self,
         image: Optional[Image.Image] = None,
@@ -298,6 +268,7 @@ class DeiTDistilledWrapper(BaseSubmodelWrapper):
                 heatmap = result["heatmap"]
                 output["heatmap_base64"] = heatmap_to_base64(heatmap)
                 output["explainability_type"] = "attention_rollout"
+                output["explainability_method"] = result.get("explainability_method")
                 output["focus_summary"] = compute_focus_summary(heatmap)
             
             return output

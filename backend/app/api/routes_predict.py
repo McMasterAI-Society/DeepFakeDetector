@@ -123,7 +123,9 @@ async def predict(
             fusion_meta = FusionMeta(
                 submodel_weights=fusion_meta_dict.get("submodel_weights", {}),
                 weighted_contributions=fusion_meta_dict.get("weighted_contributions", {}),
-                contribution_percentages=contribution_percentages
+                contribution_percentages=contribution_percentages,
+                contribution_directions=fusion_meta_dict.get("contribution_directions", {}),
+                intercept=fusion_meta_dict.get("intercept")
             ) if fusion_meta_dict else None
             
             # Build model display info for frontend
@@ -147,6 +149,8 @@ async def predict(
                         prob_fake=output["prob_fake"],
                         heatmap_base64=output.get("heatmap_base64"),
                         explainability_type=output.get("explainability_type"),
+                        heatmap_signed_base64=output.get("heatmap_signed_base64"),
+                        explainability_method=output.get("explainability_method"),
                         focus_summary=output.get("focus_summary"),
                         contribution_percentage=contribution_percentages.get(name)
                     )
@@ -177,6 +181,8 @@ async def predict(
                     prob_fake=result["prob_fake"],
                     heatmap_base64=result.get("heatmap_base64"),
                     explainability_type=result.get("explainability_type"),
+                    heatmap_signed_base64=result.get("heatmap_signed_base64"),
+                    explainability_method=result.get("explainability_method"),
                     focus_summary=result.get("focus_summary")
                 ),
                 fusion_used=False,

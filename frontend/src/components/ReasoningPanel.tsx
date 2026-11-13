@@ -9,7 +9,9 @@ interface SubmodelResult {
   pred_int: number;
   prob_fake: number;
   heatmap_base64?: string;
-  explainability_type?: "grad_cam" | "attention_rollout";
+  explainability_type?: "grad_cam" | "attention_rollout" | "signed_grad_cam";
+  explainability_method?: string;
+  heatmap_signed_base64?: string;
   focus_summary?: string;
   contribution_percentage?: number;
 }
@@ -18,6 +20,7 @@ interface FusionMeta {
   submodel_weights: Record<string, number>;
   weighted_contributions: Record<string, number>;
   contribution_percentages: Record<string, number>;
+  contribution_directions?: Record<string, "fake" | "real" | "neutral">;
 }
 
 interface ReasoningPanelProps {
@@ -211,9 +214,11 @@ const ReasoningPanel = ({
                   pred: sub.pred,
                   prob_fake: sub.prob_fake,
                   heatmap_base64: sub.heatmap_base64,
+                  heatmap_signed_base64: sub.heatmap_signed_base64,
                   focus_summary: sub.focus_summary,
                 }}
                 contributionPercentage={contributionPct}
+                contributionDirection={fusionMeta?.contribution_directions?.[name]}
                 originalImageUrl={originalImageUrl || undefined}
                 onRequestInsight={createInsightHandler(name)}
                 existingInsight={modelInsights[name]}

@@ -7,6 +7,8 @@ interface ImageSliderProps {
   originalImageUrl: string;
   /** Heatmap image as base64 string */
   heatmapBase64: string;
+  /** Optional signed map (red = evidence for fake, blue = evidence for real) */
+  signedHeatmapBase64?: string;
   /** Alt text for images */
   modelName: string;
 }
@@ -18,11 +20,14 @@ interface ImageSliderProps {
 const ImageSlider = ({
   originalImageUrl,
   heatmapBase64,
+  signedHeatmapBase64,
   modelName,
 }: ImageSliderProps) => {
   const [heatmapOpacity, setHeatmapOpacity] = useState(50);
+  const [showSigned, setShowSigned] = useState(false);
 
-  const heatmapSrc = `data:image/png;base64,${heatmapBase64}`;
+  const signed = showSigned && !!signedHeatmapBase64;
+  const heatmapSrc = `data:image/png;base64,${signed ? signedHeatmapBase64 : heatmapBase64}`;
 
   return (
     <div className="space-y-3">
@@ -51,13 +56,29 @@ const ImageSlider = ({
           <div
             className="w-12 h-2 rounded-sm"
             style={{
-              background:
-                "linear-gradient(to right, #30123b, #28459f, #1fa087, #8ed85c, #f7e225)",
+              background: signed
+                ? "linear-gradient(to right, #053061, #92c5de, #f7f7f7, #f4a582, #67001f)"
+                : "linear-gradient(to right, #30123b, #28459f, #1fa087, #8ed85c, #f7e225)",
             }}
           />
-          <span className="text-[9px] font-medium text-foreground">Low → High</span>
+          <span className="text-[9px] font-medium text-foreground">
+            {signed ? "Real ← → Fake" : "Low → High"}
+          </span>
         </div>
       </div>
+
+      {signedHeatmapBase64 && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setShowSigned(!showSigned)}
+            aria-pressed={showSigned}
+            className="text-[10px] font-medium px-2 py-0.5 rounded border border-border text-muted-foreground hover:bg-muted/40"
+          >
+            {showSigned ? "Show intensity map" : "Show fake/real evidence"}
+          </button>
+        </div>
+      )}
 
       {/* Horizontal opacity slider bar */}
       <div className="space-y-2">

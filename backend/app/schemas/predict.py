@@ -49,9 +49,20 @@ class PredictionResult(BaseModel):
         None,
         description="Base64-encoded PNG heatmap showing model attention/saliency (when explain=true)"
     )
-    explainability_type: Optional[Literal["grad_cam", "attention_rollout"]] = Field(
+    heatmap_signed_base64: Optional[str] = Field(
         None,
-        description="Type of explainability method used"
+        description=(
+            "Base64-encoded PNG of a signed map (diverging colormap: red = evidence "
+            "for fake, blue = evidence for real), when the model provides one"
+        )
+    )
+    explainability_type: Optional[Literal["grad_cam", "attention_rollout", "signed_grad_cam"]] = Field(
+        None,
+        description="Family of explainability method used"
+    )
+    explainability_method: Optional[str] = Field(
+        None,
+        description="Exact method (e.g. 'hirescam', 'gradcam++', 'grad_rollout', 'rollout', 'hirescam_signed')"
     )
     focus_summary: Optional[str] = Field(
         None,
@@ -74,11 +85,19 @@ class FusionMeta(BaseModel):
     )
     weighted_contributions: Dict[str, float] = Field(
         default_factory=dict,
-        description="Actual contribution to this prediction (weight * prob_fake)"
+        description="Signed additive contribution to the fusion logit (coef * feature)"
     )
     contribution_percentages: Dict[str, float] = Field(
         default_factory=dict,
-        description="Normalized percentages for display"
+        description="Share of the absolute contributions, in percent (sums to 100)"
+    )
+    contribution_directions: Dict[str, Literal["fake", "real", "neutral"]] = Field(
+        default_factory=dict,
+        description="Which way each contribution pushes the fusion decision"
+    )
+    intercept: Optional[float] = Field(
+        None,
+        description="Fusion intercept; intercept + sum(weighted_contributions) = fusion logit"
     )
 
 

@@ -16,7 +16,13 @@ from torchvision import transforms
 from app.core.errors import InferenceError, ConfigurationError
 from app.core.logging import get_logger
 from app.models.wrappers.base_wrapper import BaseSubmodelWrapper
-from app.services.explainability import heatmap_to_base64, compute_focus_summary
+from app.services.explainability import (
+    compute_cam,
+    compute_focus_summary,
+    heatmap_to_base64,
+    signed_evidence_share,
+    signed_heatmap_to_base64,
+)
 
 logger = get_logger(__name__)
 
@@ -228,6 +234,20 @@ class GradfieldCNNWrapper(BaseSubmodelWrapper):
         )
         return luminance.unsqueeze(0)
     
+    def _cam_target_layer(self) -> nn.Module:
+        """
+        Last ReLU of the conv stack.
+
+        Everything after it (max-pool, dropout, global average pool, two
+        linear layers) is piecewise linear with no further nonlinearity, so
+        HiResCAM at this layer decomposes the logit exactly: the map sums to
+        (logit - constant). Its activations are non-negative, so the sign of
+        the map comes from the gradient alone: positive = pushes toward fake,
+        negative = pushes toward real.
+        """
+        relus = [m for m in self._model.cnn if isinstance(m, nn.ReLU)]
+        return relus[-1] if relus else self._model.cnn[-5]
+
     def _run_inference(
         self,
         luminance_tensor: torch.Tensor,
@@ -235,89 +255,44 @@ class GradfieldCNNWrapper(BaseSubmodelWrapper):
     ) -> Dict[str, Any]:
         """Run model inference on preprocessed luminance tensor."""
         heatmap = None
-        
+        signed_map = None
+
         if explain:
-            # Custom GradCAM implementation for single-logit binary model
-            # Using absolute CAM values to capture both positive and negative contributions
-            # Target the last Conv2d layer (cnn[-5])
-            target_layer = self._model.cnn[-5]
-            
-            activations = None
-            gradients = None
-            
-            def forward_hook(module, input, output):
-                nonlocal activations
-                activations = output.detach()
-            
-            def backward_hook(module, grad_input, grad_output):
-                nonlocal gradients
-                gradients = grad_output[0].detach()
-            
-            h_fwd = target_layer.register_forward_hook(forward_hook)
-            h_bwd = target_layer.register_full_backward_hook(backward_hook)
-            
-            try:
-                # Forward pass with gradients
-                input_tensor = luminance_tensor.clone().requires_grad_(True)
-                logits, embedding = self._model(input_tensor)
-                prob_fake = torch.sigmoid(logits).item()
-                pred_int = 1 if prob_fake >= self._threshold else 0
-                
-                # Backward pass
-                self._model.zero_grad()
-                logits.backward()
-                
-                if gradients is not None and activations is not None:
-                    # Compute Grad-CAM weights (global average pooled gradients)
-                    weights = gradients.mean(dim=(2, 3), keepdim=True)  # [1, C, 1, 1]
-                    
-                    # Weighted combination of activation maps
-                    cam = (weights * activations).sum(dim=1, keepdim=True)  # [1, 1, H, W]
-                    
-                    # Use absolute values instead of ReLU to capture all contributions
-                    # This is important for models where negative gradients carry meaning
-                    cam = torch.abs(cam)
-                    
-                    # Normalize to [0, 1]
-                    cam = cam - cam.min()
-                    cam_max = cam.max()
-                    if cam_max > 0:
-                        cam = cam / cam_max
-                    
-                    # Resize to output size (256x256)
-                    cam = F.interpolate(
-                        cam,
-                        size=(256, 256),
-                        mode='bilinear',
-                        align_corners=False
-                    )
-                    
-                    heatmap = cam.squeeze().cpu().numpy()
-                else:
-                    logger.warning("GradCAM: gradients or activations not captured")
-                    heatmap = np.zeros((256, 256), dtype=np.float32)
-                    
-            finally:
-                h_fwd.remove()
-                h_bwd.remove()
+            # Signed map for the "fake" direction (target_class=1), from one
+            # forward + partial backward pass that also yields the logit.
+            out_size = tuple(luminance_tensor.shape[-2:])
+            cam = compute_cam(
+                self._model,
+                luminance_tensor,
+                self._cam_target_layer(),
+                method="hirescam",
+                target_class=1,
+                output_size=out_size,
+            )
+            logits, embedding = cam.output
+            signed_map = cam.signed_map
+            # Magnitude map for the existing heatmap view
+            heatmap = np.abs(signed_map).astype(np.float32)
         else:
             with torch.no_grad():
                 logits, embedding = self._model(luminance_tensor)
-                prob_fake = torch.sigmoid(logits).item()
-                pred_int = 1 if prob_fake >= self._threshold else 0
-        
+
+        prob_fake = torch.sigmoid(logits).item()
+        pred_int = 1 if prob_fake >= self._threshold else 0
+
         result = {
-            "logits": logits.detach().cpu().numpy().tolist() if hasattr(logits, 'detach') else logits.cpu().numpy().tolist(),
+            "logits": logits.detach().cpu().numpy().tolist(),
             "prob_fake": prob_fake,
             "pred_int": pred_int,
-            "embedding": embedding.detach().cpu().numpy().tolist() if explain else embedding.cpu().numpy().tolist()
+            "embedding": embedding.detach().cpu().numpy().tolist()
         }
-        
+
         if heatmap is not None:
             result["heatmap"] = heatmap
-        
+            result["signed_map"] = signed_map
+
         return result
-    
+
     def predict(
         self,
         image: Optional[Image.Image] = None,
@@ -385,9 +360,16 @@ class GradfieldCNNWrapper(BaseSubmodelWrapper):
             # Add heatmap if requested
             if explain and "heatmap" in result:
                 heatmap = result["heatmap"]
+                signed_map = result["signed_map"]
                 output["heatmap_base64"] = heatmap_to_base64(heatmap)
-                output["explainability_type"] = "grad_cam"
-                output["focus_summary"] = compute_focus_summary(heatmap) + " (edge-based analysis)"
+                output["heatmap_signed_base64"] = signed_heatmap_to_base64(signed_map)
+                output["explainability_type"] = "signed_grad_cam"
+                output["explainability_method"] = "hirescam_signed"
+                summary = compute_focus_summary(heatmap) + " (edge-based analysis)"
+                share = signed_evidence_share(signed_map)
+                if share is not None:
+                    summary += f"; {share * 100:.0f}% of the evidence points toward fake"
+                output["focus_summary"] = summary
             
             return output
             
