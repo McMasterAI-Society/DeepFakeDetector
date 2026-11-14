@@ -48,6 +48,25 @@ HF_SPACE_URL="${HF_SPACE_URL:-}"
 HF_SPACE_WEB_URL="${HF_SPACE_WEB_URL:-}"
 HF_SPACE_APP_URL="${HF_SPACE_APP_URL:-}"
 HF_DEPLOY_DIR="${HF_DEPLOY_DIR:-${TMPDIR:-/tmp}/hf-deployment/DeepFakeDetectorBackend}"
+HF_BUCKET_SYNC_ON_DEPLOY="${HF_BUCKET_SYNC_ON_DEPLOY:-true}"
+HF_BUCKET_URI="${HF_BUCKET_URI:-hf://buckets/<username>/<bucket-name>}"
+HF_BUCKET_LOCAL_DIR="${HF_BUCKET_LOCAL_DIR:-./data}"
+INSTALL_OPTIONAL_DEPS="${INSTALL_OPTIONAL_DEPS:-false}"
+HF_BASE_IMAGE="${HF_BASE_IMAGE:-python:3.11-slim}"
+
+case "${INSTALL_OPTIONAL_DEPS,,}" in
+  true|false) ;;
+  *)
+    echo "WARNING: INSTALL_OPTIONAL_DEPS must be true or false. Falling back to false."
+    INSTALL_OPTIONAL_DEPS="false"
+    ;;
+esac
+
+# Host-side Hugging Face CLI should always use a user-writable cache location,
+# even if backend runtime .env sets container paths like /app or /data.
+HF_HOME_HOST_DEFAULT="${HOME:-$PWD}/.cache/huggingface"
+HF_HOME="${HF_HOME_HOST:-${DEPLOY_HF_HOME:-$HF_HOME_HOST_DEFAULT}}"
+export HF_HOME
 
 # Normalize common Windows-style temp paths so values like "$TEMP\hf-deployment\..."
 # map to a real Bash path instead of becoming a literal folder name.
@@ -136,6 +155,7 @@ if ! command -v hf >/dev/null 2>&1; then
   fi
 fi
 echo "SUCCESS: Hugging Face CLI is installed"
+echo "Using host HF_HOME: $HF_HOME"
 
 echo
 echo "Checking Hugging Face authentication..."
@@ -173,14 +193,29 @@ echo "Backend directory: $BACKEND_DIR"
 
 echo
 echo "This will:"
-echo "  1. Clone your HF Space to: $HF_DEPLOY_DIR"
-echo "  2. Copy files from: $BACKEND_DIR"
-echo "  3. Push to Hugging Face Spaces"
-echo "  4. NOT affect your GitHub repository"
+echo "  1. Sync local data to HF bucket (if enabled/configured)"
+echo "  2. Clone your HF Space to: $HF_DEPLOY_DIR"
+echo "  3. Copy files from: $BACKEND_DIR"
+echo "  4. Push to Hugging Face Spaces"
+echo "  5. NOT affect your GitHub repository"
 read -r -p "Continue? (y/N) " confirm
 if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
   echo "Deployment cancelled"
   exit 0
+fi
+
+echo
+echo "Pre-deploy bucket sync..."
+if [ "$HF_BUCKET_SYNC_ON_DEPLOY" != "true" ]; then
+  echo "INFO: Skipping bucket sync because HF_BUCKET_SYNC_ON_DEPLOY=$HF_BUCKET_SYNC_ON_DEPLOY"
+elif [[ "$HF_BUCKET_URI" == *"<username>"* ]] || [[ "$HF_BUCKET_URI" == *"<bucket-name>"* ]]; then
+  echo "INFO: Skipping bucket sync because HF_BUCKET_URI is not configured (still placeholder)."
+elif [ ! -d "$HF_BUCKET_LOCAL_DIR" ]; then
+  echo "INFO: Skipping bucket sync because local data dir does not exist: $HF_BUCKET_LOCAL_DIR"
+  echo "      Create it and re-run if you want to upload files before deploy."
+else
+  chmod +x ./sync-bucket.sh || true
+  ./sync-bucket.sh "$HF_BUCKET_LOCAL_DIR"
 fi
 
 echo
@@ -237,6 +272,18 @@ for path in ./*; do
   cp -R "$path" "$HF_DEPLOY_DIR/"
   echo "  Copied: $item"
 done
+
+if [ -f "$HF_DEPLOY_DIR/Dockerfile" ]; then
+  tmp_dockerfile="$(mktemp)"
+  awk -v opt="$INSTALL_OPTIONAL_DEPS" -v base="$HF_BASE_IMAGE" '
+    /^ARG BASE_IMAGE=/ { print "ARG BASE_IMAGE=" base; next }
+    /^ARG INSTALL_OPTIONAL_DEPS=/ { print "ARG INSTALL_OPTIONAL_DEPS=" opt; next }
+    { print }
+  ' "$HF_DEPLOY_DIR/Dockerfile" > "$tmp_dockerfile"
+  mv "$tmp_dockerfile" "$HF_DEPLOY_DIR/Dockerfile"
+  echo "  Set Docker BASE_IMAGE=$HF_BASE_IMAGE"
+  echo "  Set Docker INSTALL_OPTIONAL_DEPS=$INSTALL_OPTIONAL_DEPS"
+fi
 
 echo
 echo "Committing and pushing to HF Space..."

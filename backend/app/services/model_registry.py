@@ -4,6 +4,7 @@ Model registry for managing loaded models.
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
 
@@ -128,6 +129,8 @@ class ModelRegistry:
             fusion_repo_id: Hugging Face repository ID for fusion model
             force_reload: If True, reload even if already loaded
         """
+        total_t0 = time.perf_counter()
+
         async with self._load_lock:
             if self._is_loaded and not force_reload:
                 logger.info("Models already loaded, skipping")
@@ -136,8 +139,14 @@ class ModelRegistry:
             logger.info(f"Loading models from fusion repo: {fusion_repo_id}")
             
             # Download fusion repo
+            fusion_download_t0 = time.perf_counter()
             fusion_path = await asyncio.to_thread(
                 self._hf_service.download_repo, fusion_repo_id
+            )
+            logger.info(
+                "phase3 fusion_repo_download_duration_seconds=%.3f repo_id=%s",
+                time.perf_counter() - fusion_download_t0,
+                fusion_repo_id,
             )
             
             # Read fusion config
@@ -152,57 +161,130 @@ class ModelRegistry:
                     details={"repo_id": fusion_repo_id}
                 )
             
-            # Download and load each submodel
+            # Prepare submodels sequentially to avoid concurrent Hugging Face
+            # download contention, then load the already-downloaded artifacts in parallel.
+            prepare_t0 = time.perf_counter()
+            prepared_submodels = []
             for submodel_repo_id in submodel_repos:
-                await self._load_submodel(submodel_repo_id)
+                prepared_submodels.append(
+                    await self._prepare_submodel(submodel_repo_id)
+                )
+            logger.info(
+                "phase3 submodel_prepare_total_duration_seconds=%.3f count=%d",
+                time.perf_counter() - prepare_t0,
+                len(prepared_submodels),
+            )
+
+            max_concurrent_loads = 2
+            semaphore = asyncio.Semaphore(max_concurrent_loads)
+
+            async def load_with_limit(prepared_submodel):
+                async with semaphore:
+                    return await self._load_prepared_submodel(prepared_submodel)
+
+            load_t0 = time.perf_counter()
+            load_results = await asyncio.gather(
+                *(load_with_limit(prepared_submodel) for prepared_submodel in prepared_submodels),
+                return_exceptions=True
+            )
+            logger.info(
+                "phase3 submodel_parallel_load_total_duration_seconds=%.3f concurrency=%d",
+                time.perf_counter() - load_t0,
+                max_concurrent_loads,
+            )
+
+            errors = [result for result in load_results if isinstance(result, Exception)]
+            if errors:
+                error_messages = [str(error) for error in errors]
+                raise RuntimeError(
+                    f"Failed to load one or more submodels: {error_messages}"
+                )
+
+            loaded_submodels = {
+                wrapper.name: wrapper
+                for wrapper in load_results
+                if not isinstance(wrapper, Exception)
+            }
             
             # Create and load fusion wrapper
             fusion_wrapper_class = get_fusion_wrapper_class(fusion_config)
             logger.info(f"Using fusion wrapper class {fusion_wrapper_class.__name__}")
-            self._fusion = fusion_wrapper_class(
+            fusion_wrapper = fusion_wrapper_class(
                 repo_id=fusion_repo_id,
                 config=fusion_config,
                 local_path=fusion_path
             )
-            self._fusion.load()
+            fusion_wrapper_t0 = time.perf_counter()
+            fusion_wrapper.load()
+            logger.info(
+                "phase3 fusion_wrapper_load_duration_seconds=%.3f",
+                time.perf_counter() - fusion_wrapper_t0,
+            )
+            self._fusion = fusion_wrapper
+            self._submodels = loaded_submodels
             
             self._is_loaded = True
+            logger.info(
+                "phase3 load_from_fusion_repo_total_duration_seconds=%.3f",
+                time.perf_counter() - total_t0,
+            )
             logger.info(f"Successfully loaded {len(self._submodels)} submodels and fusion model")
     
-    async def _load_submodel(self, repo_id: str) -> None:
+    async def _prepare_submodel(self, repo_id: str) -> Dict[str, Any]:
         """
-        Download and load a single submodel.
-        
-        Uses the config to determine the correct wrapper class.
-        
-        Args:
-            repo_id: Hugging Face repository ID for the submodel
+        Download a submodel repository and prepare metadata for loading.
+
+        This stays sequential to avoid concurrent Hugging Face download issues.
         """
-        logger.info(f"Loading submodel: {repo_id}")
-        
-        # Download the repo
+        logger.info(f"Preparing submodel: {repo_id}")
+        prepare_t0 = time.perf_counter()
+
         local_path = await asyncio.to_thread(
             self._hf_service.download_repo, repo_id
         )
-        
-        # Read config
         config = self._read_config(local_path)
-        
-        # Select appropriate wrapper class based on config
         wrapper_class = get_wrapper_class(config)
+
+        logger.info(
+            "phase3 prepare_submodel_duration_seconds=%.3f repo_id=%s",
+            time.perf_counter() - prepare_t0,
+            repo_id,
+        )
+
+        return {
+            "repo_id": repo_id,
+            "local_path": local_path,
+            "config": config,
+            "wrapper_class": wrapper_class,
+        }
+
+    async def _load_prepared_submodel(self, prepared_submodel: Dict[str, Any]) -> BaseSubmodelWrapper:
+        """
+        Load a submodel that has already been downloaded and prepared.
+        """
+        repo_id = prepared_submodel["repo_id"]
+        local_path = prepared_submodel["local_path"]
+        config = prepared_submodel["config"]
+        wrapper_class = prepared_submodel["wrapper_class"]
+
+        logger.info(f"Loading submodel: {repo_id}")
         logger.info(f"Using wrapper class {wrapper_class.__name__} for {repo_id}")
-        
+        load_t0 = time.perf_counter()
+
         # Create and load wrapper
         wrapper = wrapper_class(
             repo_id=repo_id,
             config=config,
             local_path=local_path
         )
-        wrapper.load()
-        
-        # Store by short name
-        self._submodels[wrapper.name] = wrapper
+        await asyncio.to_thread(wrapper.load)
         logger.info(f"Loaded submodel: {wrapper.name}")
+        logger.info(
+            "phase3 load_prepared_submodel_duration_seconds=%.3f repo_id=%s",
+            time.perf_counter() - load_t0,
+            repo_id,
+        )
+        return wrapper
     
     def _read_config(self, local_path: str) -> Dict[str, Any]:
         """

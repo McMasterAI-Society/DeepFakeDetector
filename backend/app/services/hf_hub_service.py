@@ -38,6 +38,10 @@ class HFHubService:
         """
         self.cache_dir = cache_dir or settings.HF_CACHE_DIR
         self.token = token or settings.HF_TOKEN
+
+        # Keep Hugging Face process-wide cache settings aligned with app config.
+        os.environ.setdefault("HF_HOME", settings.HF_HOME)
+        os.environ.setdefault("HF_HUB_CACHE", self.cache_dir)
         
         # Ensure cache directory exists
         Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
@@ -69,6 +73,11 @@ class HFHubService:
         logger.info(f"Downloading repo: {repo_id} (revision={revision}, force={force_download})")
         
         try:
+            cached_path = self.get_cached_path(repo_id)
+            if cached_path and not force_download:
+                logger.info(f"Using cached repo for {repo_id}: {cached_path}")
+                return cached_path
+
             # Use local_dir instead of cache_dir to avoid symlink issues on Windows
             repo_name = repo_id.replace("/", "--")
             local_dir = Path(self.cache_dir) / repo_name

@@ -4,8 +4,16 @@ FastAPI application entry point.
 DeepFake Detector API - Milestone 1: Hugging Face hosted dummy models.
 """
 
+import time
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+
+MAIN_IMPORT_T0 = time.perf_counter()
+print(
+    f"{datetime.now(timezone.utc).isoformat()} | INFO     | app.main | phase3 module_import_start",
+    flush=True,
+)
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +28,10 @@ from app.services.model_registry import get_model_registry
 # Set up logging
 setup_logging()
 logger = get_logger(__name__)
+logger.info(
+    "phase3 module_import_complete duration_seconds=%.3f",
+    time.perf_counter() - MAIN_IMPORT_T0,
+)
 
 
 @asynccontextmanager
@@ -31,6 +43,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     - Startup: Load models from Hugging Face
     - Shutdown: Cleanup resources
     """
+    startup_t0 = time.perf_counter()
+    logger.info("phase3 startup_lifespan_begin")
+
     # Startup
     logger.info("Starting DeepFake Detector API...")
     logger.info(f"Configuration: HF_FUSION_REPO_ID={settings.HF_FUSION_REPO_ID}")
@@ -38,12 +53,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     
     # Load models from Hugging Face
     try:
+        model_load_t0 = time.perf_counter()
         registry = get_model_registry()
         await registry.load_from_fusion_repo(settings.HF_FUSION_REPO_ID)
+        logger.info(
+            "phase3 startup_model_load_duration_seconds=%.3f",
+            time.perf_counter() - model_load_t0,
+        )
         logger.info("Models loaded successfully!")
     except Exception as e:
         logger.error(f"Failed to load models on startup: {e}")
         logger.warning("API will start but /ready will report not_ready until models are loaded")
+
+    logger.info(
+        "phase3 startup_lifespan_total_duration_seconds=%.3f",
+        time.perf_counter() - startup_t0,
+    )
     
     yield  # Application runs here
     
