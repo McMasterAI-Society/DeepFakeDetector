@@ -34,6 +34,9 @@ class BaseModelWrapper(ABC):
         self.config = config
         self.local_path = local_path
         self._predict_fn: Optional[Callable] = None
+        # Serving metadata, set by wrappers in load(); exposed via /models.
+        self.weights_file: Optional[str] = None
+        self.input_size: Optional[int] = None
     
     @property
     def name(self) -> str:
@@ -93,6 +96,8 @@ class BaseModelWrapper(ABC):
             "name": self.name,
             "config": self.config,
             "local_path": self.local_path,
+            "weights_file": self.weights_file,
+            "input_size": self.input_size,
             "is_loaded": self.is_loaded()
         }
 

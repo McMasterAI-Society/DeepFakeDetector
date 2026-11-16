@@ -49,7 +49,10 @@ class LogRegFusionWrapper(BaseFusionWrapper):
     @property
     def submodel_repos(self) -> List[str]:
         """Get list of submodel repository IDs."""
-        return self.config.get("submodels", [])
+        return [
+            entry["repo_id"] if isinstance(entry, dict) else entry
+            for entry in self.config.get("submodels", [])
+        ]
     
     def load(self) -> None:
         """
@@ -68,6 +71,7 @@ class LogRegFusionWrapper(BaseFusionWrapper):
         try:
             # Use joblib for sklearn models instead of pickle
             self._model = joblib.load(model_path)
+            self.weights_file = model_path.name
             logger.info(f"Loaded logistic regression fusion model from {self.repo_id}")
             
         except Exception as e:

@@ -1,7 +1,7 @@
 """
 FastAPI application entry point.
 
-DeepFake Detector API - Milestone 1: Hugging Face hosted dummy models.
+DeepFake Detector API: serves the fusion model and its submodels from Hugging Face.
 """
 
 import time
@@ -85,14 +85,13 @@ app = FastAPI(
     
     ## Features
     
-    - **Fusion prediction**: Combines multiple model predictions using majority vote
+    - **Fusion prediction**: Combines submodel probabilities (EfficientNet transfer,
+      ViT, DeiT distilled, gradient-field CNN) with a logistic-regression stacker
     - **Individual model prediction**: Run specific submodels directly
+    - **Explainability**: Optional per-model heatmaps and LLM explanations
     - **Timing information**: Detailed performance metrics for each request
-    
-    ## Milestone 1
-    
-    This is the initial milestone using dummy random models hosted on Hugging Face
-    for testing the API infrastructure.
+    - **Serving manifest**: `/models` and `/health` report the repo revision,
+      weights file and input size of every loaded model
     """,
     lifespan=lifespan,
     debug=settings.ENABLE_DEBUG

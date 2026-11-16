@@ -35,6 +35,17 @@ class Settings(BaseSettings):
     HF_PERSISTENT_CACHE: bool = True
     HF_PERSISTENT_CACHE_ROOT: str = "/data"
     HF_TOKEN: Optional[str] = None
+    # Optional git revision (ideally a commit sha) of the fusion repo. When unset,
+    # the revision from model-manifest.json is used, falling back to "main".
+    HF_FUSION_REVISION: Optional[str] = None
+    # Optional path to a model manifest pinning repo revisions. Defaults to
+    # backend/model-manifest.json when that file exists.
+    MODEL_MANIFEST_PATH: Optional[str] = None
+    # Gradient-field CNN weights file override. When unset, the wrapper uses
+    # config/manifest "weights_file", then its legacy preference list
+    # (gradient_field_cnn_v3_finetuned.pth first). The deployed fusion was fit on
+    # gradient_field_cnn_v2.pth at 224px.
+    GRADFIELD_WEIGHTS_FILE: Optional[str] = None
     
     # Google Gemini API configuration
     GOOGLE_API_KEY: Optional[str] = None

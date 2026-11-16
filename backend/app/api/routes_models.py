@@ -36,6 +36,10 @@ async def list_models() -> ModelsListResponse:
             repo_id=model["repo_id"],
             name=model["name"],
             model_type=model["model_type"],
+            revision=model.get("revision"),
+            requested_revision=model.get("requested_revision"),
+            weights_file=model.get("weights_file"),
+            input_size=model.get("input_size"),
             config=model.get("config")
         )
         
@@ -47,5 +51,6 @@ async def list_models() -> ModelsListResponse:
     return ModelsListResponse(
         fusion=fusion_info,
         submodels=submodels_info,
-        total_count=len(models)
+        total_count=len(models),
+        manifest_hash=registry.get_manifest_hash()
     )

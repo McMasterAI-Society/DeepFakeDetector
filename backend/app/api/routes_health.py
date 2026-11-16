@@ -5,7 +5,7 @@ Health check routes.
 from fastapi import APIRouter
 
 from app.core.logging import get_logger
-from app.schemas.models import HealthResponse, ReadyResponse
+from app.schemas.models import HealthResponse, ModelServingInfo, ReadyResponse
 from app.services.model_registry import get_model_registry
 
 logger = get_logger(__name__)
@@ -16,15 +16,28 @@ router = APIRouter(tags=["health"])
     "/health",
     response_model=HealthResponse,
     summary="Health check",
-    description="Simple health check to verify the API is running"
+    description="Simple health check to verify the API is running, plus what is being served"
 )
 async def health_check() -> HealthResponse:
     """
     Health check endpoint.
     
-    Returns OK if the API server is running.
+    Returns OK if the API server is running. Once models are loaded it also
+    reports the manifest hash and per-model repo, revision, weights file and
+    input size, so deploys can be verified.
     """
-    return HealthResponse(status="ok")
+    registry = get_model_registry()
+    if not registry.is_loaded:
+        return HealthResponse(status="ok")
+    fields = ModelServingInfo.model_fields.keys()
+    return HealthResponse(
+        status="ok",
+        manifest_hash=registry.get_manifest_hash(),
+        models=[
+            ModelServingInfo(**{k: model.get(k) for k in fields})
+            for model in registry.list_models()
+        ],
+    )
 
 
 @router.get(
