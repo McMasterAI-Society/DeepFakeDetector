@@ -1,0 +1,24 @@
+{
+  "fusion": {
+    "repo_id": "DeepFakeDetector/fusion-logreg-final",
+    "revision": null
+  },
+  "submodels": [
+    {
+      "repo_id": "DeepFakeDetector/cnn-transfer-final",
+      "revision": null
+    },
+    {
+      "repo_id": "DeepFakeDetector/vit-base-final",
+      "revision": null
+    },
+    {
+      "repo_id": "DeepFakeDetector/deit-distilled-final",
+      "revision": null
+    },
+    {
+      "repo_id": "DeepFakeDetector/gradfield-cnn-final",
+      "revision": null
+    }
+  ]
+}
