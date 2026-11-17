@@ -1,0 +1,13 @@
+# Evaluation harness (offline scoring, bias-probe generation, fusion refit).
+# Versions match backend/requirements-runtime.txt so exported fusion pickles
+# load in production.
+numpy>=1.24.0,<2.0.0
+scipy>=1.10
+scikit-learn==1.6.1
+joblib>=1.3
+pillow>=10.2.0,<11.0.0
+tqdm>=4.66
+pytest>=7.4.0,<9.0.0
+
+# In-process candidates (deployed / submodel:<name>) additionally need the
+# backend stack:  pip install -r backend/requirements-runtime.txt
