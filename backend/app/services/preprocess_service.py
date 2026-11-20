@@ -1,3 +1,4 @@
+import io
 """
 Image preprocessing service.
 """
@@ -58,9 +59,36 @@ class PreprocessService:
                 details={"size": len(image_bytes)}
             )
         
+        # Decode check (audit 11): corrupt/truncated files, decompression bombs and
+        # tiny images become clean 4xx errors instead of 500s or meaningless verdicts.
+        from app.core.config import settings
+        from app.core.errors import ImageTooLargeError
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as probe_im:
+                w, h = probe_im.size
+        except Exception as e:  # noqa: BLE001
+            raise ImageProcessingError(message=f"Could not read image: {e}", details={"size": len(image_bytes)})
+        if w * h > settings.MAX_IMAGE_PIXELS:
+            raise ImageTooLargeError(
+                message=f"Image too large: {w}x{h} px (limit {settings.MAX_IMAGE_PIXELS:,} pixels)",
+                details={"width": w, "height": h, "max_pixels": settings.MAX_IMAGE_PIXELS},
+            )
+        if min(w, h) < settings.MIN_IMAGE_SIDE:
+            raise ImageProcessingError(
+                message=f"Image too small: {w}x{h} px (shorter side must be at least {settings.MIN_IMAGE_SIDE} px)",
+                details={"width": w, "height": h, "min_side": settings.MIN_IMAGE_SIDE},
+            )
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as full:
+                full.load()  # full decode: catches truncated/corrupt data
+        except Exception as e:  # noqa: BLE001
+            raise ImageProcessingError(message=f"Image data is corrupt or truncated: {e}", details={"size": len(image_bytes)})
+
         return {
             "valid": True,
-            "size_bytes": len(image_bytes)
+            "size_bytes": len(image_bytes),
+            "width": w,
+            "height": h,
         }
     
     def decode_image(self, image_bytes: bytes) -> Image.Image:

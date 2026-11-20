@@ -606,6 +606,10 @@ Respond with valid JSON only, no markdown formatting."""
             }
         except Exception as e:
             logger.error(f"Failed to generate single model explanation: {e}")
+            msg = str(e)
+            if any(k in msg for k in ("402", "429", "RESOURCE_EXHAUSTED", "prepayment", "quota", "503", "UNAVAILABLE")):
+                from app.core.errors import LLMUnavailableError
+                raise LLMUnavailableError(message=msg[:300])
             return None
 
 

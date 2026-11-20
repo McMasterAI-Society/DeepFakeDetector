@@ -730,7 +730,8 @@ class TestShadow:
             r2 = client.post("/explain", files={"image": ("x.jpg", jpeg_bytes(), "image/jpeg")})
         assert r1.status_code == 200 and r2.status_code == 200
         assert "shadow" not in r1.text and "shadow" not in r2.text
-        assert [r["explain"] for r in shadow_lines(caplog)] == [False, True]  # the shadow did run
+        recs = shadow_lines(caplog)
+        assert [r["route"] for r in recs] == ["/predict", "/explain"]  # the shadow did run, and the route is recorded
         m = client.get("/models").json()
         assert m["fusion"]["shadow_heads"][0]["head_version"] == "shadow-7"
 

@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     PROBE_SHADOW_LOCAL_PATH: Optional[str] = None
     PROBE_SHADOW_LOG_PATH: Optional[str] = None
 
+    # Upload limits checked before inference (audit 11): images with a shorter side
+    # below MIN_IMAGE_SIDE are rejected (the model sees a 224 px crop; tiny images
+    # produced meaningless "ai" verdicts), and images above MAX_IMAGE_PIXELS are
+    # rejected with 413 (decompression-bomb guard).
+    MIN_IMAGE_SIDE: int = 64
+    MAX_IMAGE_PIXELS: int = 60_000_000
+
     # Google Gemini API configuration
     GOOGLE_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-2.5-flash"

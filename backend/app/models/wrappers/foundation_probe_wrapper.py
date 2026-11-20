@@ -754,7 +754,7 @@ class FoundationProbeWrapper(BaseSubmodelWrapper):
             out = self._forward(x, explain=explain)
             result = self._build_output(out, orig_size, explain)
             if self.shadows:
-                self._score_shadows(out["feats"], result, stats, explain=explain)
+                self._score_shadows(out["feats"], result, stats, explain=explain, route=kwargs.get("route"))
             return result
         except (InferenceError, ConfigurationError):
             raise
@@ -773,7 +773,7 @@ class FoundationProbeWrapper(BaseSubmodelWrapper):
     _shadow_failures = 0
 
     def _score_shadows(self, feats: np.ndarray, result: Dict[str, Any], stats: Optional[Dict[str, Any]],
-                       explain: bool = False) -> None:
+                       explain: bool = False, route: Optional[str] = None) -> None:
         """
         Score every shadow head on the served features and log one JSON line (and
         append it to PROBE_SHADOW_LOG_PATH when set). Adds result["shadow"] for
@@ -793,8 +793,11 @@ class FoundationProbeWrapper(BaseSubmodelWrapper):
             record = {
                 "request_id": uuid.uuid4().hex[:16],
                 "ts": round(time.time(), 3),
-                # The frontend calls /predict and then /explain for the same upload when
-                # heatmaps are requested: analyses should drop explain=true lines.
+                # "route" separates first scorings (/predict) from repeat scorings of the
+                # same upload (/explain, which a frontend may call after /predict for
+                # heatmaps): analyses should keep route == "/predict" only. "explain" only
+                # says whether heatmaps were computed.
+                "route": route,
                 "explain": bool(explain),
                 "served": {"head_version": self.head.head_version, "prob_fake": result["prob_fake"],
                            "raw_logit": result["meta"]["raw_logit"], "pred_int": result["pred_int"],
