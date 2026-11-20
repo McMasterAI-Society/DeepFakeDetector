@@ -387,7 +387,8 @@ class TestRegistry:
         from app.services.model_manifest import load_local_manifest, resolve_probe_pins
         path = Path(__file__).resolve().parents[1] / "model-manifest.json"
         pins = resolve_probe_pins(settings.HF_PROBE_REPO_ID, load_local_manifest(str(path)))
-        assert pins["revision"] is None  # placeholder until the head repo is uploaded
+        rev = pins["revision"]  # the uploaded head repo is pinned to a full commit SHA
+        assert isinstance(rev, str) and len(rev) == 40 and all(c in "0123456789abcdef" for c in rev)
         assert pins["backbones"]["dinov3_b16"]["revision"] == fpw.DEFAULT_BACKBONE_SOURCES["dinov3_b16"]["revision"]
         assert pins["backbones"]["clip_b16"]["revision"] == fpw.DEFAULT_BACKBONE_SOURCES["clip_b16"]["revision"]
 
@@ -465,7 +466,7 @@ class TestApi:
         d = r.json()
         assert d["verdict"] in ("ai", "inconclusive", "real")
         assert d["model_version"] == reg.get_probe().model_version
-        assert d["verdict_bands"] == [0.2, 0.7]
+        assert d["verdict_bands"] == json.loads((TEMPLATE / "config.json").read_text())["verdict_bands"]
         assert set(d["submodels"]) == {"clip-b16", "dinov3-b16"}
         assert set(d["model_display_info"]) == {"clip-b16", "dinov3-b16"}
         meta = d["fusion_meta"]
