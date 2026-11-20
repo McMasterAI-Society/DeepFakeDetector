@@ -453,6 +453,65 @@ def _default_download(repo_id: str, filename: str, revision: Optional[str]) -> s
 
 
 # --------------------------------------------------------------------------- #
+# Shadow heads and request statistics (monitoring only)
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class ShadowHead:
+    """A candidate head scored on the served head's features and only logged."""
+
+    head: ProbeHead
+    bands: Tuple[float, float]
+    source: str
+
+    @property
+    def threshold(self) -> float:
+        return self.head.threshold
+
+
+# IJG standard luminance quantisation table (quality 50), for estimating the
+# JPEG quality of uploads from their quantisation tables.
+_STD_LUMA_Q50 = np.array([
+    16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14, 13, 16, 24, 40, 57, 69, 56,
+    14, 17, 22, 29, 51, 87, 80, 62, 18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81, 104, 113, 92,
+    49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99], dtype=np.float64)
+
+
+def estimate_jpeg_quality(im: Image.Image) -> Optional[int]:
+    """Approximate IJG quality (1-100) from the luminance table; None if not a JPEG."""
+    q = getattr(im, "quantization", None)
+    if not q or 0 not in q:
+        return None
+    t = np.asarray(q[0], dtype=np.float64)
+    if t.size != 64:
+        return None
+    scale = 100.0 * float(np.mean(t / _STD_LUMA_Q50))
+    quality = (200.0 - scale) / 2.0 if scale <= 100.0 else 5000.0 / scale
+    return int(min(100, max(1, round(quality))))
+
+
+def image_stats(im: Image.Image, n_bytes: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Non-identifying properties of an upload used to slice shadow-vs-served
+    comparisons (format, size, JPEG quality, whether camera EXIF is present).
+    Never includes pixels, EXIF values, GPS or file names.
+    """
+    w, h = oriented_size(im)
+    try:
+        exif = im.getexif()
+        has_camera = bool(exif.get(0x010F) or exif.get(0x0110))  # Make / Model present
+    except Exception:  # noqa: BLE001
+        has_camera = False
+    return {
+        "format": (im.format or "").lower() or None,
+        "width": int(w), "height": int(h), "short_side": int(min(w, h)),
+        "jpeg_quality": estimate_jpeg_quality(im),
+        "has_camera_exif": has_camera,
+        "bytes": int(n_bytes) if n_bytes is not None else None,
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Wrapper
 # --------------------------------------------------------------------------- #
 
@@ -474,6 +533,7 @@ class FoundationProbeWrapper(BaseSubmodelWrapper):
         self.device = torch.device("cpu")
         self.dtype = torch.float32
         self.backbone_sources: Dict[str, Dict[str, Any]] = {}
+        self.shadows: List[ShadowHead] = []
 
     # ---- loading -------------------------------------------------------- #
 
@@ -545,6 +605,41 @@ class FoundationProbeWrapper(BaseSubmodelWrapper):
         logger.info(f"Loaded foundation probe {self.model_version} bands={self.bands} "
                     f"threshold={self.threshold:.4f} in {time.perf_counter() - t0:.2f}s")
 
+    def attach_shadow(self, path: str, source: str = "") -> ShadowHead:
+        """
+        Add a shadow head from a directory with config.json + head.npz.
+
+        The shadow is scored on the served head's backbone features, so its config
+        must describe exactly the same features (same backbones, layers and
+        preprocessing -> same feature-spec hash). Raises ConfigurationError otherwise.
+        """
+        if not self.backbones or self.head is None:
+            raise ConfigurationError(message="Load the served probe before attaching a shadow head")
+        d = Path(path)
+        try:
+            cfg = json.loads((d / "config.json").read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            raise ConfigurationError(message=f"Shadow head config unreadable at {d}: {e}", details={"path": str(d)})
+        if cfg.get("type") != PROBE_TYPE:
+            raise ConfigurationError(message=f"Shadow config at {d} is not type {PROBE_TYPE}")
+        served_spec = feature_spec_hash(self.config)
+        if feature_spec_hash(cfg) != served_spec:
+            raise ConfigurationError(
+                message="Shadow head uses a different feature spec than the served head",
+                details={"shadow": feature_spec_hash(cfg), "served": served_spec},
+            )
+        head = load_head(d / cfg.get("head_file", "head.npz"), expected_dim=self.head.dim, expected_spec_hash=served_spec)
+        bands = parse_bands(cfg.get("verdict_bands")) or DEFAULT_VERDICT_BANDS
+        shadow = ShadowHead(head=head, bands=bands, source=source or f"local:{d}")
+        self.shadows.append(shadow)
+        logger.info(f"Attached shadow head {head.head_version} from {shadow.source} "
+                    f"threshold={head.threshold:.4f} bands={bands}")
+        return shadow
+
+    def shadow_infos(self) -> List[Dict[str, Any]]:
+        return [{"head_version": s.head.head_version, "source": s.source, "threshold": s.threshold,
+                 "verdict_bands": list(s.bands)} for s in self.shadows]
+
     @property
     def model_version(self) -> str:
         head_v = self.head.head_version if self.head else "unloaded"
@@ -606,14 +701,49 @@ class FoundationProbeWrapper(BaseSubmodelWrapper):
             image = Image.open(io.BytesIO(image_bytes))
         try:
             orig_size = oriented_size(image)
+            stats = self._safe_stats(image, image_bytes) if self.shadows else None
             x = self._to_tensor(preprocess(image, canonical=canonicalize))
             out = self._forward(x, explain=explain)
-            return self._build_output(out, orig_size, explain)
+            result = self._build_output(out, orig_size, explain)
+            if self.shadows:
+                self._score_shadows(out["feats"], result, stats)
+            return result
         except (InferenceError, ConfigurationError):
             raise
         except Exception as e:  # noqa: BLE001
             logger.error(f"Prediction failed for {self.repo_id}: {e}")
             raise InferenceError(message=f"Prediction failed: {e}", details={"repo_id": self.repo_id})
+
+    @staticmethod
+    def _safe_stats(image: Image.Image, image_bytes: Optional[bytes]) -> Optional[Dict[str, Any]]:
+        try:
+            return image_stats(image, len(image_bytes) if image_bytes is not None else None)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"shadow image stats failed: {e}")
+            return None
+
+    def _score_shadows(self, feats: np.ndarray, result: Dict[str, Any], stats: Optional[Dict[str, Any]]) -> None:
+        """
+        Score every shadow head on the served features and log one JSON line.
+        Adds result["shadow"] for internal use; the API response never includes it,
+        and a failure here never affects the served result.
+        """
+        try:
+            shadow_out = []
+            for s in self.shadows:
+                z = float(s.head.raw_logit(feats))
+                p = float(s.head.calibrate(np.float64(z)))
+                shadow_out.append({"head_version": s.head.head_version, "prob_fake": p, "raw_logit": z,
+                                   "pred_int": int(p >= s.threshold), "verdict": verdict_for(p, s.bands)})
+            result["shadow"] = shadow_out
+            logger.info("shadow_probe " + json.dumps({
+                "served": {"head_version": self.head.head_version, "prob_fake": result["prob_fake"],
+                           "pred_int": result["pred_int"], "verdict": result["verdict"]},
+                "shadow": shadow_out,
+                "image": stats,
+            }, separators=(",", ":")))
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"shadow head scoring failed: {e}")
 
     def _build_output(self, out: Dict[str, Any], orig_size: Tuple[int, int], explain: bool) -> Dict[str, Any]:
         head = self.head

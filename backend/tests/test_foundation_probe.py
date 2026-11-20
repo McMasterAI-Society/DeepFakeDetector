@@ -24,6 +24,8 @@ from app.core.errors import ConfigurationError
 from app.models.wrappers.foundation_probe_wrapper import (
     DEFAULT_LOGIT_CLIP,
     FoundationProbeWrapper,
+    estimate_jpeg_quality,
+    image_stats,
     ProbeHead,
     feature_spec_hash,
     load_head,
@@ -512,6 +514,100 @@ class TestApi:
             from app.main import app
         r = TestClient(app).post("/explain", files={"image": ("x.jpg", jpeg_bytes(), "image/jpeg")})
         assert r.status_code == 409
+
+
+# --------------------------------------------------------------------------- #
+# Shadow head (logged only)
+# --------------------------------------------------------------------------- #
+
+def make_shadow_dir(tmp_path, seed=7, **kw):
+    d = tmp_path / f"shadow{seed}"
+    d.mkdir()
+    shutil.copyfile(TEMPLATE / "config.json", d / "config.json")
+    config = json.loads((d / "config.json").read_text())
+    head = random_head(config, 2 * 3 * TINY_DIM, seed=seed, head_version=f"shadow-{seed}", threshold=0.72, **kw)
+    head.save(d / "head.npz")
+    return d, head
+
+
+class TestShadow:
+    def test_shadow_scored_on_same_features_and_served_result_unchanged(self, wrapper, tmp_path):
+        before = wrapper.predict(image_bytes=jpeg_bytes())
+        d, head = make_shadow_dir(tmp_path)
+        wrapper.attach_shadow(str(d), source="test")
+        after = wrapper.predict(image_bytes=jpeg_bytes())
+        for k in ("prob_fake", "pred_int", "verdict"):
+            assert after[k] == before[k]
+        (s,) = after["shadow"]
+        z = after["meta"]["raw_logit"]
+        # same features -> the shadow's logit equals its head applied to them
+        feats = wrapper._forward(wrapper._to_tensor(fpw.preprocess(Image.open(io.BytesIO(jpeg_bytes())))))["feats"]
+        assert s["raw_logit"] == pytest.approx(float(head.raw_logit(feats)), abs=1e-9)
+        assert s["prob_fake"] == pytest.approx(float(head.calibrate(np.float64(s["raw_logit"]))))
+        assert s["pred_int"] == int(s["prob_fake"] >= 0.72) and s["head_version"] == "shadow-7"
+        assert z == before["meta"]["raw_logit"]
+
+    def test_shadow_with_other_feature_spec_rejected(self, wrapper, tmp_path):
+        d, _ = make_shadow_dir(tmp_path)
+        cfg = json.loads((d / "config.json").read_text())
+        cfg["layers"] = [4, 8]
+        (d / "config.json").write_text(json.dumps(cfg))
+        with pytest.raises(ConfigurationError):
+            wrapper.attach_shadow(str(d))
+        assert wrapper.shadows == []
+
+    def test_shadow_failure_never_breaks_prediction(self, wrapper, tmp_path, monkeypatch):
+        d, _ = make_shadow_dir(tmp_path)
+        wrapper.attach_shadow(str(d))
+        monkeypatch.setattr(wrapper.shadows[0].head, "raw_logit", lambda f: (_ for _ in ()).throw(RuntimeError("boom")))
+        r = wrapper.predict(image_bytes=jpeg_bytes())
+        assert r["verdict"] in ("ai", "inconclusive", "real") and "shadow" not in r
+
+    def test_shadow_log_line(self, wrapper, tmp_path, caplog):
+        d, _ = make_shadow_dir(tmp_path)
+        wrapper.attach_shadow(str(d))
+        with caplog.at_level("INFO"):
+            wrapper.predict(image_bytes=jpeg_bytes())
+        lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("shadow_probe ")]
+        assert len(lines) == 1
+        rec = json.loads(lines[0][len("shadow_probe "):])
+        assert rec["served"]["head_version"] == "test-head" and rec["shadow"][0]["head_version"] == "shadow-7"
+        assert rec["image"]["format"] == "jpeg" and rec["image"]["width"] == 320 and rec["image"]["has_camera_exif"] is False
+        assert 90 <= rec["image"]["jpeg_quality"] <= 100
+
+    def test_registry_attaches_local_shadow_and_lists_it(self, probe_dir, tiny_backbones, tmp_path, monkeypatch):
+        d, _ = make_shadow_dir(tmp_path)
+        monkeypatch.setattr(settings, "MODEL_MANIFEST_PATH", None)
+        monkeypatch.setattr(settings, "PROBE_SHADOW_LOCAL_PATH", str(d))
+        reg = ModelRegistry()
+        asyncio.run(reg.load_foundation_probe(local_path=str(probe_dir)))
+        assert [s.head.head_version for s in reg.get_probe().shadows] == ["shadow-7"]
+        assert reg.list_models()[0]["config"]["shadow_heads"][0]["head_version"] == "shadow-7"
+
+    def test_registry_bad_shadow_keeps_serving(self, probe_dir, tiny_backbones, tmp_path, monkeypatch):
+        monkeypatch.setattr(settings, "MODEL_MANIFEST_PATH", None)
+        monkeypatch.setattr(settings, "PROBE_SHADOW_LOCAL_PATH", str(tmp_path / "missing"))
+        reg = ModelRegistry()
+        asyncio.run(reg.load_foundation_probe(local_path=str(probe_dir)))
+        assert reg.get_probe().shadows == [] and reg.is_loaded
+        assert "shadow_heads" not in reg.list_models()[0]["config"]
+
+    def test_api_response_does_not_expose_shadow(self, probe_client, tmp_path):
+        client, reg = probe_client
+        d, _ = make_shadow_dir(tmp_path)
+        reg.get_probe().attach_shadow(str(d))
+        r = client.post("/predict", files={"image": ("x.jpg", jpeg_bytes(), "image/jpeg")})
+        assert r.status_code == 200 and "shadow" not in r.text
+
+    def test_image_stats_and_jpeg_quality(self):
+        for q in (60, 75, 90, 95):
+            b = io.BytesIO(); Image.new("RGB", (64, 48), (120, 30, 200)).save(b, format="JPEG", quality=q)
+            est = estimate_jpeg_quality(Image.open(io.BytesIO(b.getvalue())))
+            assert abs(est - q) <= 2, (q, est)
+        b = io.BytesIO(); Image.new("RGB", (40, 30)).save(b, format="PNG")
+        st = image_stats(Image.open(io.BytesIO(b.getvalue())), 123)
+        assert st == {"format": "png", "width": 40, "height": 30, "short_side": 30, "jpeg_quality": None,
+                      "has_camera_exif": False, "bytes": 123}
 
 
 # --------------------------------------------------------------------------- #

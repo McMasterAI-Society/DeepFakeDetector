@@ -219,6 +219,7 @@ class ModelRegistry:
 
             wrapper = FoundationProbeWrapper(repo_id=repo_id, config=config, local_path=path)
             await asyncio.to_thread(wrapper.load)
+            await self._attach_shadow(wrapper)
 
             self._probe = wrapper
             self._fusion = None
@@ -233,6 +234,26 @@ class ModelRegistry:
                 "phase3 load_foundation_probe_total_duration_seconds=%.3f",
                 time.perf_counter() - total_t0,
             )
+
+    async def _attach_shadow(self, wrapper: FoundationProbeWrapper) -> None:
+        """
+        Attach the optional shadow head (PROBE_SHADOW_LOCAL_PATH, or
+        PROBE_SHADOW_REPO_ID at PROBE_SHADOW_REVISION). Best effort: a shadow that
+        fails to download or validate is logged and skipped; serving continues.
+        """
+        local, repo, rev = settings.PROBE_SHADOW_LOCAL_PATH, settings.PROBE_SHADOW_REPO_ID, settings.PROBE_SHADOW_REVISION
+        if not (local or repo):
+            return
+        try:
+            if local:
+                path, source = str(local), f"local:{local}"
+            else:
+                path = await asyncio.to_thread(self._hf_service.download_repo, repo, rev)
+                sha = self._hf_service.resolve_commit_sha(path, rev)
+                source = f"hf:{repo}@{rev or 'main'}" + (f" ({sha[:12]})" if sha else "")
+            await asyncio.to_thread(wrapper.attach_shadow, path, source)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Shadow head not attached ({e}); serving continues without it")
 
     def _probe_backbone_infos(self, wrapper: FoundationProbeWrapper) -> List[Dict[str, Any]]:
         """Serving info for the probe's backbones (upstream repo, pinned revision)."""
@@ -543,7 +564,8 @@ class ModelRegistry:
                 **self._serving_info(self._probe),
                 "name": self._probe.name,
                 "model_type": "probe",
-                "config": self._probe.config,
+                "config": ({**self._probe.config, "shadow_heads": self._probe.shadow_infos()}
+                           if self._probe.shadows else self._probe.config),
             })
             models.extend(self._probe_backbone_infos(self._probe))
             return models

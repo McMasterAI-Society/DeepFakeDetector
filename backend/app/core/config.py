@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     # gradient explanation costs ~2.8x a plain prediction (RTX 4060 Laptop,
     # 0.29 s -> 0.82 s), so heatmaps are served on demand by POST /explain.
     PROBE_EXPLAIN_ON_PREDICT: bool = False
+    # Shadow head: a second probe head scored on the SAME backbone features as the
+    # served head and only logged (never returned to users, never changes the
+    # verdict). Off unless a repo or local path is set. The head must share the
+    # served head's feature spec (backbones, layers, preprocessing).
+    #   PROBE_SHADOW_REPO_ID / PROBE_SHADOW_REVISION: head repo + revision (e.g. a branch)
+    #   PROBE_SHADOW_LOCAL_PATH: directory with config.json + head.npz instead
+    PROBE_SHADOW_REPO_ID: Optional[str] = None
+    PROBE_SHADOW_REVISION: Optional[str] = None
+    PROBE_SHADOW_LOCAL_PATH: Optional[str] = None
 
     # Google Gemini API configuration
     GOOGLE_API_KEY: Optional[str] = None
