@@ -40,7 +40,8 @@ async def list_models() -> ModelsListResponse:
             requested_revision=model.get("requested_revision"),
             weights_file=model.get("weights_file"),
             input_size=model.get("input_size"),
-            config=model.get("config")
+            config=model.get("config"),
+            shadow_heads=model.get("shadow_heads"),
         )
         
         # In foundation-probe mode the probe takes the fusion slot and its

@@ -34,6 +34,10 @@ class ModelInfo(ModelServingInfo):
         None,
         description="Model configuration from config.json"
     )
+    shadow_heads: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description="Shadow probe heads scored and logged next to the served head (never served)"
+    )
 
 
 class ModelsListResponse(BaseModel):

@@ -79,11 +79,18 @@ class Settings(BaseSettings):
     # served head and only logged (never returned to users, never changes the
     # verdict). Off unless a repo or local path is set. The head must share the
     # served head's feature spec (backbones, layers, preprocessing).
-    #   PROBE_SHADOW_REPO_ID / PROBE_SHADOW_REVISION: head repo + revision (e.g. a branch)
-    #   PROBE_SHADOW_LOCAL_PATH: directory with config.json + head.npz instead
+    #   PROBE_SHADOW_REPO_ID / PROBE_SHADOW_REVISION: head repo + revision. A branch
+    #     name is resolved to its current commit SHA at startup and that SHA is
+    #     downloaded, so pushing a new candidate takes effect on the next restart.
+    #   PROBE_SHADOW_LOCAL_PATH: directory with config.json + head.npz instead (wins
+    #     over the repo when both are set).
+    #   PROBE_SHADOW_LOG_PATH: optional JSONL file the shadow lines are appended to
+    #     (e.g. /data/shadow/shadow_probe.jsonl). HF Space logs are not kept across
+    #     restarts, so without it the comparison data only lives in the live log.
     PROBE_SHADOW_REPO_ID: Optional[str] = None
     PROBE_SHADOW_REVISION: Optional[str] = None
     PROBE_SHADOW_LOCAL_PATH: Optional[str] = None
+    PROBE_SHADOW_LOG_PATH: Optional[str] = None
 
     # Google Gemini API configuration
     GOOGLE_API_KEY: Optional[str] = None
