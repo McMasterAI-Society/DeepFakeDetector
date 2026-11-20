@@ -671,6 +671,47 @@ class TestShadow:
         (s,) = reg.get_probe().shadows
         assert s.source == f"hf:org/heads@candidate-branch ({sha[:12]})" and s.revision == sha
 
+    def test_registry_attaches_several_local_shadows(self, probe_dir, tiny_backbones, tmp_path, monkeypatch, caplog):
+        d1, _ = make_shadow_dir(tmp_path, seed=7)
+        d2, _ = make_shadow_dir(tmp_path, seed=8)
+        monkeypatch.setattr(settings, "MODEL_MANIFEST_PATH", None)
+        monkeypatch.setattr(settings, "PROBE_SHADOW_LOCAL_PATH", f"{d1}, {d2}")
+        reg = ModelRegistry()
+        asyncio.run(reg.load_foundation_probe(local_path=str(probe_dir)))
+        assert [s.head.head_version for s in reg.get_probe().shadows] == ["shadow-7", "shadow-8"]
+        assert [h["head_version"] for h in reg.list_models()[0]["shadow_heads"]] == ["shadow-7", "shadow-8"]
+        with caplog.at_level("INFO"):
+            reg.get_probe().predict(image_bytes=jpeg_bytes())
+        (rec,) = shadow_lines(caplog)
+        assert [s["head_version"] for s in rec["shadow"]] == ["shadow-7", "shadow-8"]
+
+    def test_registry_several_hf_revisions_one_failing(self, probe_dir, tiny_backbones, tmp_path, monkeypatch):
+        good, _ = make_shadow_dir(tmp_path, seed=7)
+        calls = []
+
+        class FakeHF:
+            def download_repo(self, repo, revision=None, force_download=False):
+                calls.append(revision)
+                if revision == "b" * 40:
+                    raise RuntimeError("404")
+                return str(good)
+
+            def resolve_commit_sha(self, path, revision):
+                return None
+
+        shas = {"cand-a": "a" * 40, "cand-b": "b" * 40}
+        monkeypatch.setattr(settings, "MODEL_MANIFEST_PATH", None)
+        monkeypatch.setattr(settings, "PROBE_SHADOW_LOCAL_PATH", None)
+        monkeypatch.setattr(settings, "PROBE_SHADOW_REPO_ID", "org/heads")
+        monkeypatch.setattr(settings, "PROBE_SHADOW_REVISION", "cand-a,cand-b")
+        monkeypatch.setattr(ModelRegistry, "_resolve_revision_sha", staticmethod(lambda repo, rev: shas[rev]))
+        reg = ModelRegistry()
+        reg._hf_service = FakeHF()
+        asyncio.run(reg.load_foundation_probe(local_path=str(probe_dir)))
+        assert calls == ["a" * 40, "b" * 40]
+        (s,) = reg.get_probe().shadows  # the failing candidate is skipped, the other attached, serving continues
+        assert s.revision == "a" * 40 and reg.is_loaded
+
     def test_registry_bad_shadow_keeps_serving(self, probe_dir, tiny_backbones, tmp_path, monkeypatch):
         monkeypatch.setattr(settings, "MODEL_MANIFEST_PATH", None)
         monkeypatch.setattr(settings, "PROBE_SHADOW_LOCAL_PATH", str(tmp_path / "missing"))

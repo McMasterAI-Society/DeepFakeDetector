@@ -79,7 +79,8 @@ class Settings(BaseSettings):
     # served head and only logged (never returned to users, never changes the
     # verdict). Off unless a repo or local path is set. The head must share the
     # served head's feature spec (backbones, layers, preprocessing).
-    #   PROBE_SHADOW_REPO_ID / PROBE_SHADOW_REVISION: head repo + revision. A branch
+    #   PROBE_SHADOW_REPO_ID / PROBE_SHADOW_REVISION: head repo + revision(s); a
+    #     comma-separated list (e.g. r3c-shadow,r4-shadow) shadows several heads. A branch
     #     name is resolved to its current commit SHA at startup and that SHA is
     #     downloaded, so pushing a new candidate takes effect on the next restart.
     #   PROBE_SHADOW_LOCAL_PATH: directory with config.json + head.npz instead (wins

@@ -239,20 +239,25 @@ class ModelRegistry:
 
     async def _attach_shadow(self, wrapper: FoundationProbeWrapper) -> None:
         """
-        Attach the optional shadow head (PROBE_SHADOW_LOCAL_PATH, or
-        PROBE_SHADOW_REPO_ID at PROBE_SHADOW_REVISION). Best effort and time-boxed:
-        a shadow that fails to resolve, download or validate is logged and skipped;
-        serving continues.
+        Attach the optional shadow head(s): PROBE_SHADOW_LOCAL_PATH, or
+        PROBE_SHADOW_REPO_ID at PROBE_SHADOW_REVISION. Both accept a comma-separated
+        list (e.g. "r3c-shadow,r4-shadow") to shadow several candidates on the same
+        features. Best effort and time-boxed per head: a shadow that fails to resolve,
+        download or validate is logged and skipped; the others and serving continue.
         """
-        local, repo, rev = settings.PROBE_SHADOW_LOCAL_PATH, settings.PROBE_SHADOW_REPO_ID, settings.PROBE_SHADOW_REVISION
+        split = lambda v: [x.strip() for x in str(v).split(",") if x.strip()] if v else []  # noqa: E731
+        local, repo, revs = split(settings.PROBE_SHADOW_LOCAL_PATH), settings.PROBE_SHADOW_REPO_ID, split(settings.PROBE_SHADOW_REVISION)
         if not (local or repo):
             return
         if local and repo:
-            logger.warning("Both PROBE_SHADOW_LOCAL_PATH and PROBE_SHADOW_REPO_ID are set; using the local path")
-        try:
-            await asyncio.wait_for(self._attach_shadow_inner(wrapper, local, repo, rev), self.SHADOW_ATTACH_TIMEOUT_S)
-        except Exception as e:  # noqa: BLE001  (includes asyncio.TimeoutError)
-            logger.error(f"Shadow head not attached ({type(e).__name__}: {e}); serving continues without it")
+            logger.warning("Both PROBE_SHADOW_LOCAL_PATH and PROBE_SHADOW_REPO_ID are set; using the local path(s)")
+        targets = [(p, None) for p in local] if local else [(None, r) for r in (revs or [None])]
+        for path, rev in targets:
+            try:
+                await asyncio.wait_for(self._attach_shadow_inner(wrapper, path, repo, rev), self.SHADOW_ATTACH_TIMEOUT_S)
+            except Exception as e:  # noqa: BLE001  (includes asyncio.TimeoutError)
+                logger.error(f"Shadow head {path or rev or 'main'} not attached ({type(e).__name__}: {e}); "
+                             f"serving continues without it")
 
     async def _attach_shadow_inner(self, wrapper, local, repo, rev) -> None:
         if local:
