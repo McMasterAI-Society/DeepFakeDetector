@@ -75,6 +75,30 @@ class Settings(BaseSettings):
     # gradient explanation costs ~2.8x a plain prediction (RTX 4060 Laptop,
     # 0.29 s -> 0.82 s), so heatmaps are served on demand by POST /explain.
     PROBE_EXPLAIN_ON_PREDICT: bool = False
+    # Shadow head: a second probe head scored on the SAME backbone features as the
+    # served head and only logged (never returned to users, never changes the
+    # verdict). Off unless a repo or local path is set. The head must share the
+    # served head's feature spec (backbones, layers, preprocessing).
+    #   PROBE_SHADOW_REPO_ID / PROBE_SHADOW_REVISION: head repo + revision(s); a
+    #     comma-separated list (e.g. r3c-shadow,r4-shadow) shadows several heads. A branch
+    #     name is resolved to its current commit SHA at startup and that SHA is
+    #     downloaded, so pushing a new candidate takes effect on the next restart.
+    #   PROBE_SHADOW_LOCAL_PATH: directory with config.json + head.npz instead (wins
+    #     over the repo when both are set).
+    #   PROBE_SHADOW_LOG_PATH: optional JSONL file the shadow lines are appended to
+    #     (e.g. /data/shadow/shadow_probe.jsonl). HF Space logs are not kept across
+    #     restarts, so without it the comparison data only lives in the live log.
+    PROBE_SHADOW_REPO_ID: Optional[str] = None
+    PROBE_SHADOW_REVISION: Optional[str] = None
+    PROBE_SHADOW_LOCAL_PATH: Optional[str] = None
+    PROBE_SHADOW_LOG_PATH: Optional[str] = None
+
+    # Upload limits checked before inference (audit 11): images with a shorter side
+    # below MIN_IMAGE_SIDE are rejected (the model sees a 224 px crop; tiny images
+    # produced meaningless "ai" verdicts), and images above MAX_IMAGE_PIXELS are
+    # rejected with 413 (decompression-bomb guard).
+    MIN_IMAGE_SIDE: int = 64
+    MAX_IMAGE_PIXELS: int = 60_000_000
 
     # Google Gemini API configuration
     GOOGLE_API_KEY: Optional[str] = None

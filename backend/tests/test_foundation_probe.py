@@ -24,6 +24,8 @@ from app.core.errors import ConfigurationError
 from app.models.wrappers.foundation_probe_wrapper import (
     DEFAULT_LOGIT_CLIP,
     FoundationProbeWrapper,
+    estimate_jpeg_quality,
+    image_stats,
     ProbeHead,
     feature_spec_hash,
     load_head,
@@ -387,7 +389,8 @@ class TestRegistry:
         from app.services.model_manifest import load_local_manifest, resolve_probe_pins
         path = Path(__file__).resolve().parents[1] / "model-manifest.json"
         pins = resolve_probe_pins(settings.HF_PROBE_REPO_ID, load_local_manifest(str(path)))
-        assert pins["revision"] is None  # placeholder until the head repo is uploaded
+        rev = pins["revision"]  # the uploaded head repo is pinned to a full commit SHA
+        assert isinstance(rev, str) and len(rev) == 40 and all(c in "0123456789abcdef" for c in rev)
         assert pins["backbones"]["dinov3_b16"]["revision"] == fpw.DEFAULT_BACKBONE_SOURCES["dinov3_b16"]["revision"]
         assert pins["backbones"]["clip_b16"]["revision"] == fpw.DEFAULT_BACKBONE_SOURCES["clip_b16"]["revision"]
 
@@ -465,7 +468,7 @@ class TestApi:
         d = r.json()
         assert d["verdict"] in ("ai", "inconclusive", "real")
         assert d["model_version"] == reg.get_probe().model_version
-        assert d["verdict_bands"] == [0.2, 0.7]
+        assert d["verdict_bands"] == json.loads((TEMPLATE / "config.json").read_text())["verdict_bands"]
         assert set(d["submodels"]) == {"clip-b16", "dinov3-b16"}
         assert set(d["model_display_info"]) == {"clip-b16", "dinov3-b16"}
         meta = d["fusion_meta"]
@@ -511,6 +514,243 @@ class TestApi:
             from app.main import app
         r = TestClient(app).post("/explain", files={"image": ("x.jpg", jpeg_bytes(), "image/jpeg")})
         assert r.status_code == 409
+
+
+# --------------------------------------------------------------------------- #
+# Shadow head (logged only)
+# --------------------------------------------------------------------------- #
+
+def make_shadow_dir(tmp_path, seed=7, **kw):
+    d = tmp_path / f"shadow{seed}"
+    d.mkdir()
+    shutil.copyfile(TEMPLATE / "config.json", d / "config.json")
+    config = json.loads((d / "config.json").read_text())
+    head = random_head(config, 2 * 3 * TINY_DIM, seed=seed, head_version=f"shadow-{seed}", threshold=0.72, **kw)
+    head.save(d / "head.npz")
+    return d, head
+
+
+def shadow_lines(caplog):
+    return [json.loads(r.getMessage()[len("shadow_probe "):]) for r in caplog.records
+            if r.getMessage().startswith("shadow_probe ")]
+
+
+class TestShadow:
+    @pytest.mark.parametrize("explain,canonical", [(False, True), (True, True), (False, False)])
+    def test_shadow_scored_on_served_features_and_served_result_unchanged(self, wrapper, tmp_path, monkeypatch,
+                                                                           explain, canonical):
+        before = wrapper.predict(image_bytes=jpeg_bytes(), explain=explain, canonicalize=canonical)
+        d, head = make_shadow_dir(tmp_path)
+        wrapper.attach_shadow(str(d), source="test")
+        calls = []
+        orig = wrapper._forward
+        monkeypatch.setattr(wrapper, "_forward", lambda x, explain=False: calls.append(1) or orig(x, explain=explain))
+        after = wrapper.predict(image_bytes=jpeg_bytes(), explain=explain, canonicalize=canonical)
+        assert len(calls) == 1  # no second backbone pass for the shadow
+        for k in ("prob_fake", "pred_int", "verdict"):
+            assert after[k] == before[k]
+        (s,) = after["shadow"]
+        im = Image.open(io.BytesIO(jpeg_bytes()))
+        feats = orig(wrapper._to_tensor(fpw.preprocess(im, canonical=canonical)))["feats"]
+        assert s["raw_logit"] == pytest.approx(float(head.raw_logit(feats)), abs=1e-6)
+        assert s["prob_fake"] == pytest.approx(float(head.calibrate(np.float64(s["raw_logit"]))))
+        assert s["pred_int"] == int(s["prob_fake"] >= 0.72) and s["head_version"] == "shadow-7"
+        assert s["threshold"] == 0.72 and s["bands"] == json.loads((TEMPLATE / "config.json").read_text())["verdict_bands"]
+
+    def test_shadow_with_other_feature_spec_rejected(self, wrapper, tmp_path):
+        d, _ = make_shadow_dir(tmp_path)
+        cfg = json.loads((d / "config.json").read_text())
+        cfg["layers"] = [4, 8]
+        (d / "config.json").write_text(json.dumps(cfg))
+        with pytest.raises(ConfigurationError, match="different feature spec"):
+            wrapper.attach_shadow(str(d))
+        assert wrapper.shadows == []
+
+    def test_shadow_head_without_embedded_spec_rejected(self, wrapper, tmp_path):
+        d, _ = make_shadow_dir(tmp_path, feature_spec_hash="")
+        with pytest.raises(ConfigurationError, match="embed the served feature-spec"):
+            wrapper.attach_shadow(str(d))
+
+    def test_shadow_on_other_backbone_weights_rejected(self, wrapper, tmp_path):
+        d, _ = make_shadow_dir(tmp_path)
+        cfg = json.loads((d / "config.json").read_text())
+        cfg["backbone_sources"]["dinov3_b16"]["revision"] = "0" * 40
+        (d / "config.json").write_text(json.dumps(cfg))
+        with pytest.raises(ConfigurationError, match="other dinov3_b16 weights"):
+            wrapper.attach_shadow(str(d))
+
+    def test_shadow_head_file_cannot_escape_dir(self, wrapper, tmp_path):
+        d, _ = make_shadow_dir(tmp_path)
+        shutil.copyfile(d / "head.npz", tmp_path / "outside.npz")
+        cfg = json.loads((d / "config.json").read_text())
+        cfg["head_file"] = "../outside.npz"
+        (d / "config.json").write_text(json.dumps(cfg))
+        with pytest.raises(ConfigurationError, match="inside the shadow directory"):
+            wrapper.attach_shadow(str(d))
+
+    def test_attach_twice_is_noop(self, wrapper, tmp_path):
+        d, _ = make_shadow_dir(tmp_path)
+        wrapper.attach_shadow(str(d), source="x")
+        wrapper.attach_shadow(str(d), source="x")
+        assert len(wrapper.shadows) == 1
+
+    def test_shadow_failure_never_breaks_prediction_and_is_rate_limited(self, wrapper, tmp_path, monkeypatch, caplog):
+        d, _ = make_shadow_dir(tmp_path)
+        wrapper.attach_shadow(str(d))
+        monkeypatch.setattr(wrapper.shadows[0].head, "raw_logit", lambda f: (_ for _ in ()).throw(RuntimeError("boom")))
+        with caplog.at_level("WARNING"):
+            for _ in range(6):
+                r = wrapper.predict(image_bytes=jpeg_bytes())
+                assert r["verdict"] in ("ai", "inconclusive", "real") and "shadow" not in r
+        warns = [x for x in caplog.records if "shadow head scoring failed" in x.getMessage()]
+        assert len(warns) == 3
+
+    def test_image_stats_failure_never_breaks_prediction(self, wrapper, tmp_path, monkeypatch, caplog):
+        d, _ = make_shadow_dir(tmp_path)
+        wrapper.attach_shadow(str(d))
+        monkeypatch.setattr(fpw, "image_stats", lambda *a, **k: (_ for _ in ()).throw(ValueError("bad exif")))
+        with caplog.at_level("INFO"):
+            r = wrapper.predict(image_bytes=jpeg_bytes())
+        assert r["verdict"] in ("ai", "inconclusive", "real")
+        (rec,) = shadow_lines(caplog)
+        assert rec["image"] is None
+
+    def test_shadow_log_line_and_jsonl_sink(self, wrapper, tmp_path, caplog, monkeypatch):
+        sink = tmp_path / "logs" / "shadow.jsonl"
+        monkeypatch.setattr(settings, "PROBE_SHADOW_LOG_PATH", str(sink))
+        d, _ = make_shadow_dir(tmp_path)
+        wrapper.attach_shadow(str(d))
+        with caplog.at_level("INFO"):
+            wrapper.predict(image_bytes=jpeg_bytes())
+            wrapper.predict(image_bytes=jpeg_bytes(), explain=True)
+        recs = shadow_lines(caplog)
+        assert [r["explain"] for r in recs] == [False, True]
+        assert len({r["request_id"] for r in recs}) == 2
+        rec = recs[0]
+        assert rec["served"]["head_version"] == "test-head" and rec["shadow"][0]["head_version"] == "shadow-7"
+        assert rec["served"]["threshold"] == pytest.approx(0.31) and "raw_logit" in rec["served"]
+        img = rec["image"]
+        assert img["format"] == "jpeg" and img["short_side_bucket"] == 256 and img["aspect_bucket"] == 1.35
+        assert img["has_camera_exif"] is False and img["ijg_table"] is True and 93 <= img["jpeg_quality"] <= 97
+        assert not {"width", "height", "bytes"} & set(img)  # bucketed only, no exact size fingerprint
+        assert [json.loads(l) for l in sink.read_text().splitlines()] == recs
+
+    def test_registry_attaches_local_shadow_and_lists_it(self, probe_dir, tiny_backbones, tmp_path, monkeypatch):
+        d, _ = make_shadow_dir(tmp_path)
+        monkeypatch.setattr(settings, "MODEL_MANIFEST_PATH", None)
+        monkeypatch.setattr(settings, "PROBE_SHADOW_LOCAL_PATH", str(d))
+        reg = ModelRegistry()
+        asyncio.run(reg.load_foundation_probe(local_path=str(probe_dir)))
+        assert [s.head.head_version for s in reg.get_probe().shadows] == ["shadow-7"]
+        info = reg.list_models()[0]
+        assert info["shadow_heads"][0]["head_version"] == "shadow-7" and "shadow_heads" not in info["config"]
+        assert "source" not in info["shadow_heads"][0]  # no local paths / repo names on the public endpoint
+
+    def test_registry_hf_shadow_resolves_branch_to_sha(self, probe_dir, tiny_backbones, tmp_path, monkeypatch):
+        d, _ = make_shadow_dir(tmp_path)
+        sha = "ab" * 20
+        calls = []
+
+        class FakeHF:
+            def download_repo(self, repo, revision=None, force_download=False):
+                calls.append((repo, revision))
+                return str(d)
+
+            def resolve_commit_sha(self, path, revision):
+                return None
+
+        monkeypatch.setattr(settings, "MODEL_MANIFEST_PATH", None)
+        monkeypatch.setattr(settings, "PROBE_SHADOW_LOCAL_PATH", None)
+        monkeypatch.setattr(settings, "PROBE_SHADOW_REPO_ID", "org/heads")
+        monkeypatch.setattr(settings, "PROBE_SHADOW_REVISION", "candidate-branch")
+        monkeypatch.setattr(ModelRegistry, "_resolve_revision_sha", staticmethod(lambda repo, rev: sha))
+        reg = ModelRegistry()
+        reg._hf_service = FakeHF()
+        asyncio.run(reg.load_foundation_probe(local_path=str(probe_dir)))
+        assert calls == [("org/heads", sha)]  # downloaded by SHA, not by the (stale-cacheable) branch name
+        (s,) = reg.get_probe().shadows
+        assert s.source == f"hf:org/heads@candidate-branch ({sha[:12]})" and s.revision == sha
+
+    def test_registry_attaches_several_local_shadows(self, probe_dir, tiny_backbones, tmp_path, monkeypatch, caplog):
+        d1, _ = make_shadow_dir(tmp_path, seed=7)
+        d2, _ = make_shadow_dir(tmp_path, seed=8)
+        monkeypatch.setattr(settings, "MODEL_MANIFEST_PATH", None)
+        monkeypatch.setattr(settings, "PROBE_SHADOW_LOCAL_PATH", f"{d1}, {d2}")
+        reg = ModelRegistry()
+        asyncio.run(reg.load_foundation_probe(local_path=str(probe_dir)))
+        assert [s.head.head_version for s in reg.get_probe().shadows] == ["shadow-7", "shadow-8"]
+        assert [h["head_version"] for h in reg.list_models()[0]["shadow_heads"]] == ["shadow-7", "shadow-8"]
+        with caplog.at_level("INFO"):
+            reg.get_probe().predict(image_bytes=jpeg_bytes())
+        (rec,) = shadow_lines(caplog)
+        assert [s["head_version"] for s in rec["shadow"]] == ["shadow-7", "shadow-8"]
+
+    def test_registry_several_hf_revisions_one_failing(self, probe_dir, tiny_backbones, tmp_path, monkeypatch):
+        good, _ = make_shadow_dir(tmp_path, seed=7)
+        calls = []
+
+        class FakeHF:
+            def download_repo(self, repo, revision=None, force_download=False):
+                calls.append(revision)
+                if revision == "b" * 40:
+                    raise RuntimeError("404")
+                return str(good)
+
+            def resolve_commit_sha(self, path, revision):
+                return None
+
+        shas = {"cand-a": "a" * 40, "cand-b": "b" * 40}
+        monkeypatch.setattr(settings, "MODEL_MANIFEST_PATH", None)
+        monkeypatch.setattr(settings, "PROBE_SHADOW_LOCAL_PATH", None)
+        monkeypatch.setattr(settings, "PROBE_SHADOW_REPO_ID", "org/heads")
+        monkeypatch.setattr(settings, "PROBE_SHADOW_REVISION", "cand-a,cand-b")
+        monkeypatch.setattr(ModelRegistry, "_resolve_revision_sha", staticmethod(lambda repo, rev: shas[rev]))
+        reg = ModelRegistry()
+        reg._hf_service = FakeHF()
+        asyncio.run(reg.load_foundation_probe(local_path=str(probe_dir)))
+        assert calls == ["a" * 40, "b" * 40]
+        (s,) = reg.get_probe().shadows  # the failing candidate is skipped, the other attached, serving continues
+        assert s.revision == "a" * 40 and reg.is_loaded
+
+    def test_registry_bad_shadow_keeps_serving(self, probe_dir, tiny_backbones, tmp_path, monkeypatch):
+        monkeypatch.setattr(settings, "MODEL_MANIFEST_PATH", None)
+        monkeypatch.setattr(settings, "PROBE_SHADOW_LOCAL_PATH", str(tmp_path / "missing"))
+        reg = ModelRegistry()
+        asyncio.run(reg.load_foundation_probe(local_path=str(probe_dir)))
+        assert reg.get_probe().shadows == [] and reg.is_loaded
+        assert "shadow_heads" not in reg.list_models()[0]
+
+    def test_api_never_exposes_shadow(self, probe_client, tmp_path, caplog):
+        client, reg = probe_client
+        d, _ = make_shadow_dir(tmp_path)
+        reg.get_probe().attach_shadow(str(d))
+        files = {"image": ("x.jpg", jpeg_bytes(), "image/jpeg")}
+        with caplog.at_level("INFO"):
+            r1 = client.post("/predict", files=files)
+            r2 = client.post("/explain", files={"image": ("x.jpg", jpeg_bytes(), "image/jpeg")})
+        assert r1.status_code == 200 and r2.status_code == 200
+        assert "shadow" not in r1.text and "shadow" not in r2.text
+        recs = shadow_lines(caplog)
+        assert [r["route"] for r in recs] == ["/predict", "/explain"]  # the shadow did run, and the route is recorded
+        m = client.get("/models").json()
+        assert m["fusion"]["shadow_heads"][0]["head_version"] == "shadow-7"
+
+    def test_image_stats_and_jpeg_quality(self):
+        for q in (60, 75, 90, 95):
+            b = io.BytesIO(); Image.new("RGB", (64, 48), (120, 30, 200)).save(b, format="JPEG", quality=q)
+            im = Image.open(io.BytesIO(b.getvalue()))
+            est = estimate_jpeg_quality(im)
+            assert abs(est - q) <= 2, (q, est)
+        b = io.BytesIO(); Image.new("RGB", (40, 30)).save(b, format="PNG")
+        st = image_stats(Image.open(io.BytesIO(b.getvalue())), 3000)
+        assert st == {"format": "png", "short_side_bucket": 0, "aspect_bucket": 1.35, "jpeg_quality": None,
+                      "ijg_table": None, "has_camera_exif": False, "size_log2_kib": 2}  # log2(3000 B / 1 KiB) = 1.55
+
+    def test_served_sigmoid_is_stable_without_logit_clip(self, wrapper, monkeypatch):
+        monkeypatch.setattr(wrapper.head, "logit_clip", None)
+        monkeypatch.setattr(wrapper.head, "intercept", -5000.0)
+        r = wrapper.predict(image_bytes=jpeg_bytes())
+        assert r["prob_fake"] == 0.0 and r["verdict"] == "real"
 
 
 # --------------------------------------------------------------------------- #

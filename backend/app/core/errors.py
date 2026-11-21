@@ -38,6 +38,16 @@ class ImageProcessingError(DeepFakeDetectorError):
     pass
 
 
+class ImageTooLargeError(ImageProcessingError):
+    """Raised when an image exceeds the pixel limit (decompression-bomb guard); maps to HTTP 413."""
+    pass
+
+
+class LLMUnavailableError(DeepFakeDetectorError):
+    """Raised when the LLM provider refuses for quota/billing/availability reasons; maps to HTTP 503."""
+    pass
+
+
 class InferenceError(DeepFakeDetectorError):
     """Raised when model inference fails."""
     pass

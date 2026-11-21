@@ -302,7 +302,7 @@ def heatmap_to_base64(
     import matplotlib.cm as cm
     
     # Get colormap
-    cmap = cm.get_cmap(colormap)
+    cmap = matplotlib.colormaps[colormap]  # cm.get_cmap was removed in matplotlib 3.9
     
     # Apply colormap (returns RGBA)
     colored = cmap(heatmap)
@@ -371,7 +371,7 @@ def overlay_heatmap_on_image(
     ) / 255.0
     
     # Apply colormap
-    cmap = cm.get_cmap(colormap)
+    cmap = matplotlib.colormaps[colormap]  # cm.get_cmap was removed in matplotlib 3.9
     heatmap_colored = cmap(heatmap_resized)[:, :, :3]
     heatmap_colored = (heatmap_colored * 255).astype(np.uint8)
     

@@ -219,6 +219,7 @@ class ModelRegistry:
 
             wrapper = FoundationProbeWrapper(repo_id=repo_id, config=config, local_path=path)
             await asyncio.to_thread(wrapper.load)
+            await self._attach_shadow(wrapper)
 
             self._probe = wrapper
             self._fusion = None
@@ -233,6 +234,52 @@ class ModelRegistry:
                 "phase3 load_foundation_probe_total_duration_seconds=%.3f",
                 time.perf_counter() - total_t0,
             )
+
+    SHADOW_ATTACH_TIMEOUT_S = 120.0
+
+    async def _attach_shadow(self, wrapper: FoundationProbeWrapper) -> None:
+        """
+        Attach the optional shadow head(s): PROBE_SHADOW_LOCAL_PATH, or
+        PROBE_SHADOW_REPO_ID at PROBE_SHADOW_REVISION. Both accept a comma-separated
+        list (e.g. "r3c-shadow,r4-shadow") to shadow several candidates on the same
+        features. Best effort and time-boxed per head: a shadow that fails to resolve,
+        download or validate is logged and skipped; the others and serving continue.
+        """
+        split = lambda v: [x.strip() for x in str(v).split(",") if x.strip()] if v else []  # noqa: E731
+        local, repo, revs = split(settings.PROBE_SHADOW_LOCAL_PATH), settings.PROBE_SHADOW_REPO_ID, split(settings.PROBE_SHADOW_REVISION)
+        if not (local or repo):
+            return
+        if local and repo:
+            logger.warning("Both PROBE_SHADOW_LOCAL_PATH and PROBE_SHADOW_REPO_ID are set; using the local path(s)")
+        targets = [(p, None) for p in local] if local else [(None, r) for r in (revs or [None])]
+        for path, rev in targets:
+            try:
+                await asyncio.wait_for(self._attach_shadow_inner(wrapper, path, repo, rev), self.SHADOW_ATTACH_TIMEOUT_S)
+            except Exception as e:  # noqa: BLE001  (includes asyncio.TimeoutError)
+                logger.error(f"Shadow head {path or rev or 'main'} not attached ({type(e).__name__}: {e}); "
+                             f"serving continues without it")
+
+    async def _attach_shadow_inner(self, wrapper, local, repo, rev) -> None:
+        if local:
+            await asyncio.to_thread(wrapper.attach_shadow, str(local), f"local:{local}", None)
+            return
+        sha = await asyncio.to_thread(self._resolve_revision_sha, repo, rev)
+        # Download by SHA: a branch-named cache entry is never refreshed (audit 08 M1).
+        path = await asyncio.to_thread(self._hf_service.download_repo, repo, sha or rev)
+        source = f"hf:{repo}@{rev or 'main'}" + (f" ({sha[:12]})" if sha else "")
+        await asyncio.to_thread(wrapper.attach_shadow, path, source, sha)
+
+    @staticmethod
+    def _resolve_revision_sha(repo: str, rev: Optional[str]) -> Optional[str]:
+        """Current commit SHA of repo@rev (a 40-hex rev is returned as is); None if offline."""
+        if rev and len(rev) == 40 and all(c in "0123456789abcdef" for c in rev.lower()):
+            return rev.lower()
+        try:
+            from huggingface_hub import HfApi
+            return HfApi(token=settings.HF_TOKEN).model_info(repo, revision=rev).sha
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Could not resolve {repo}@{rev or 'main'} to a commit ({e}); using the cached revision")
+            return None
 
     def _probe_backbone_infos(self, wrapper: FoundationProbeWrapper) -> List[Dict[str, Any]]:
         """Serving info for the probe's backbones (upstream repo, pinned revision)."""
@@ -544,6 +591,7 @@ class ModelRegistry:
                 "name": self._probe.name,
                 "model_type": "probe",
                 "config": self._probe.config,
+                **({"shadow_heads": self._probe.shadow_infos()} if self._probe.shadows else {}),
             })
             models.extend(self._probe_backbone_infos(self._probe))
             return models

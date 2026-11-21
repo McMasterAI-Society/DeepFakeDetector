@@ -36,6 +36,7 @@ import io
 import json
 import math
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -453,6 +454,90 @@ def _default_download(repo_id: str, filename: str, revision: Optional[str]) -> s
 
 
 # --------------------------------------------------------------------------- #
+# Shadow heads and request statistics (monitoring only)
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class ShadowHead:
+    """A candidate head scored on the served head's features and only logged."""
+
+    head: ProbeHead
+    bands: Tuple[float, float]
+    source: str
+    revision: Optional[str] = None
+
+    @property
+    def threshold(self) -> float:
+        return self.head.threshold
+
+
+# IJG standard luminance quantisation table (quality 50), for estimating the
+# JPEG quality of uploads from their quantisation tables.
+_STD_LUMA_Q50 = np.array([
+    16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14, 13, 16, 24, 40, 57, 69, 56,
+    14, 17, 22, 29, 51, 87, 80, 62, 18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81, 104, 113, 92,
+    49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99], dtype=np.float64)
+
+
+def _luma_table(im: Image.Image) -> Optional[np.ndarray]:
+    q = getattr(im, "quantization", None)
+    if not q or 0 not in q:
+        return None
+    t = np.asarray(q[0], dtype=np.float64)
+    return t if t.size == 64 else None
+
+
+def estimate_jpeg_quality(im: Image.Image) -> Optional[int]:
+    """
+    Approximate IJG quality (1-100) from the luminance table; None if not a JPEG.
+    Accurate to ~1-2 for libjpeg/Pillow tables (quality 10-98). For custom tables
+    (phones, Photoshop) it is only an IJG-equivalent value; see ``is_ijg_table``.
+    """
+    t = _luma_table(im)
+    if t is None:
+        return None
+    scale = 100.0 * float(np.mean(t / _STD_LUMA_Q50))
+    quality = (200.0 - scale) / 2.0 if scale <= 100.0 else 5000.0 / scale
+    return int(min(100, max(1, round(quality))))
+
+
+def is_ijg_table(im: Image.Image, quality: Optional[int]) -> Optional[bool]:
+    """True when the luminance table is the standard IJG table at ``quality`` (within +-1)."""
+    t = _luma_table(im)
+    if t is None or quality is None:
+        return None
+    sc = 5000.0 / quality if quality < 50 else 200.0 - 2.0 * quality
+    ref = np.clip(np.floor((_STD_LUMA_Q50 * sc + 50.0) / 100.0), 1, 255)
+    return bool(np.all(np.abs(ref - t) <= 1))
+
+
+def image_stats(im: Image.Image, n_bytes: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Coarse, non-identifying properties of an upload used to slice shadow-vs-served
+    comparisons. Values are bucketed (short side to 64 px, aspect to 0.05, size as
+    log2 KiB) so a record cannot be matched back to a specific file. Never includes
+    pixels, EXIF values, GPS or file names.
+    """
+    w, h = oriented_size(im)
+    try:
+        exif = im.getexif()
+        has_camera = bool(exif.get(0x010F) or exif.get(0x0110))  # Make / Model present
+    except Exception:  # noqa: BLE001
+        has_camera = False
+    short, long_ = min(w, h), max(w, h)
+    quality = estimate_jpeg_quality(im)
+    return {
+        "format": (im.format or "").lower() or None,
+        "short_side_bucket": int(64 * round(short / 64)),
+        "aspect_bucket": round(round((long_ / max(1, short)) / 0.05) * 0.05, 2),
+        "jpeg_quality": quality,
+        "ijg_table": is_ijg_table(im, quality),
+        "has_camera_exif": has_camera,
+        "size_log2_kib": int(round(math.log2(max(1, n_bytes) / 1024))) if n_bytes else None,
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Wrapper
 # --------------------------------------------------------------------------- #
 
@@ -474,6 +559,7 @@ class FoundationProbeWrapper(BaseSubmodelWrapper):
         self.device = torch.device("cpu")
         self.dtype = torch.float32
         self.backbone_sources: Dict[str, Dict[str, Any]] = {}
+        self.shadows: List[ShadowHead] = []
 
     # ---- loading -------------------------------------------------------- #
 
@@ -545,6 +631,63 @@ class FoundationProbeWrapper(BaseSubmodelWrapper):
         logger.info(f"Loaded foundation probe {self.model_version} bands={self.bands} "
                     f"threshold={self.threshold:.4f} in {time.perf_counter() - t0:.2f}s")
 
+    def attach_shadow(self, path: str, source: str = "", revision: Optional[str] = None) -> ShadowHead:
+        """
+        Add a shadow head from a directory with config.json + head.npz.
+
+        The shadow is scored on the served head's backbone features, so it must
+        describe exactly the same features: the same feature-spec hash in config.json
+        AND embedded in head.npz (required for shadows), and the same pinned backbone
+        repo/revision/file wherever the shadow config lists them. Raises
+        ConfigurationError otherwise. Attaching the same head twice is a no-op.
+        """
+        if not self.backbones or self.head is None:
+            raise ConfigurationError(message="Load the served probe before attaching a shadow head")
+        d = Path(path)
+        try:
+            cfg = json.loads((d / "config.json").read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            raise ConfigurationError(message=f"Shadow head config unreadable at {d}: {e}", details={"path": str(d)})
+        if cfg.get("type") != PROBE_TYPE:
+            raise ConfigurationError(message=f"Shadow config at {d} is not type {PROBE_TYPE}")
+        served_spec = feature_spec_hash(self.config)
+        if feature_spec_hash(cfg) != served_spec:
+            raise ConfigurationError(
+                message="Shadow head uses a different feature spec than the served head",
+                details={"shadow": feature_spec_hash(cfg), "served": served_spec},
+            )
+        for key, src in (cfg.get("backbone_sources") or {}).items():
+            served = self.backbone_sources.get(key, {})
+            for field_ in ("repo_id", "revision", "filename"):
+                if src.get(field_) and served.get(field_) and src[field_] != served[field_]:
+                    raise ConfigurationError(
+                        message=f"Shadow head was fit on other {key} weights "
+                                f"({field_} {src[field_]} != served {served[field_]})",
+                        details={"backbone": key},
+                    )
+        head_path = (d / cfg.get("head_file", "head.npz")).resolve()
+        if d.resolve() not in head_path.parents:
+            raise ConfigurationError(message="Shadow head_file must stay inside the shadow directory")
+        head = load_head(head_path, expected_dim=self.head.dim, expected_spec_hash=served_spec)
+        if head.feature_spec_hash != served_spec:
+            raise ConfigurationError(message="Shadow head.npz must embed the served feature-spec hash",
+                                     details={"head": head.feature_spec_hash, "served": served_spec})
+        src_label = source or f"local:{d}"
+        for existing in self.shadows:
+            if existing.head.head_version == head.head_version and existing.source == src_label:
+                return existing
+        bands = parse_bands(cfg.get("verdict_bands")) or DEFAULT_VERDICT_BANDS
+        shadow = ShadowHead(head=head, bands=bands, source=src_label, revision=revision)
+        self.shadows.append(shadow)
+        logger.info(f"Attached shadow head {head.head_version} from {shadow.source} "
+                    f"threshold={head.threshold:.4f} bands={bands}")
+        return shadow
+
+    def shadow_infos(self) -> List[Dict[str, Any]]:
+        """Public description of attached shadow heads (no local paths or repo names)."""
+        return [{"head_version": s.head.head_version, "revision": s.revision, "threshold": s.threshold,
+                 "verdict_bands": list(s.bands)} for s in self.shadows]
+
     @property
     def model_version(self) -> str:
         head_v = self.head.head_version if self.head else "unloaded"
@@ -606,14 +749,86 @@ class FoundationProbeWrapper(BaseSubmodelWrapper):
             image = Image.open(io.BytesIO(image_bytes))
         try:
             orig_size = oriented_size(image)
+            stats = self._safe_stats(image, image_bytes) if self.shadows else None
             x = self._to_tensor(preprocess(image, canonical=canonicalize))
             out = self._forward(x, explain=explain)
-            return self._build_output(out, orig_size, explain)
+            result = self._build_output(out, orig_size, explain)
+            if self.shadows:
+                self._score_shadows(out["feats"], result, stats, explain=explain, route=kwargs.get("route"))
+            return result
         except (InferenceError, ConfigurationError):
             raise
         except Exception as e:  # noqa: BLE001
             logger.error(f"Prediction failed for {self.repo_id}: {e}")
             raise InferenceError(message=f"Prediction failed: {e}", details={"repo_id": self.repo_id})
+
+    @staticmethod
+    def _safe_stats(image: Image.Image, image_bytes: Optional[bytes]) -> Optional[Dict[str, Any]]:
+        try:
+            return image_stats(image, len(image_bytes) if image_bytes is not None else None)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"shadow image stats failed: {e}")
+            return None
+
+    _shadow_failures = 0
+
+    def _score_shadows(self, feats: np.ndarray, result: Dict[str, Any], stats: Optional[Dict[str, Any]],
+                       explain: bool = False, route: Optional[str] = None) -> None:
+        """
+        Score every shadow head on the served features and log one JSON line (and
+        append it to PROBE_SHADOW_LOG_PATH when set). Adds result["shadow"] for
+        internal use; the API response never includes it, and a failure here never
+        affects the served result.
+        """
+        try:
+            shadow_out = []
+            for s in self.shadows:
+                z = float(s.head.raw_logit(feats))
+                p = float(s.head.calibrate(np.float64(z)))
+                shadow_out.append({"head_version": s.head.head_version, "prob_fake": p, "raw_logit": z,
+                                   "pred_int": int(p >= s.threshold), "verdict": verdict_for(p, s.bands),
+                                   "verdict_at_served_bands": verdict_for(p, self.bands),
+                                   "threshold": s.threshold, "bands": list(s.bands)})
+            result["shadow"] = shadow_out
+            record = {
+                "request_id": uuid.uuid4().hex[:16],
+                "ts": round(time.time(), 3),
+                # "route" separates first scorings (/predict) from repeat scorings of the
+                # same upload (/explain, which a frontend may call after /predict for
+                # heatmaps): analyses should keep route == "/predict" only. "explain" only
+                # says whether heatmaps were computed.
+                "route": route,
+                "explain": bool(explain),
+                "served": {"head_version": self.head.head_version, "prob_fake": result["prob_fake"],
+                           "raw_logit": result["meta"]["raw_logit"], "pred_int": result["pred_int"],
+                           "verdict": result["verdict"], "threshold": self.threshold, "bands": list(self.bands)},
+                "shadow": shadow_out,
+                "image": stats,
+            }
+            line = json.dumps(record, separators=(",", ":"), allow_nan=False)
+            logger.info("shadow_probe " + line)
+            self._append_shadow_log(line)
+            self._shadow_failures = 0
+        except Exception as e:  # noqa: BLE001
+            self._shadow_failures += 1
+            n = self._shadow_failures
+            if n <= 3 or n % 100 == 0:  # do not flood the log on every request
+                logger.warning(f"shadow head scoring failed ({n} in a row): {e}")
+
+    def _append_shadow_log(self, line: str) -> None:
+        """Append to PROBE_SHADOW_LOG_PATH (e.g. on the /data volume); rotate at ~50 MB."""
+        path = getattr(self._settings(), "PROBE_SHADOW_LOG_PATH", None)
+        if not path:
+            return
+        try:
+            p = Path(path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if p.exists() and p.stat().st_size > 50 * 2**20:
+                p.replace(p.with_name(p.name + ".1"))
+            with open(p, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"shadow log file write failed: {e}")
 
     def _build_output(self, out: Dict[str, Any], orig_size: Tuple[int, int], explain: bool) -> Dict[str, Any]:
         head = self.head
@@ -621,7 +836,8 @@ class FoundationProbeWrapper(BaseSubmodelWrapper):
         std = (f - head.scaler_mean) / head.scaler_scale
         z = float(std @ head.coef + head.intercept)
         cal = float(head.calibrated_logit(np.float64(z)))
-        p = float(1.0 / (1.0 + math.exp(-cal)))
+        # numerically stable sigmoid (math.exp(-cal) overflows for cal < -709 when logit_clip is off)
+        p = float(1.0 / (1.0 + math.exp(-cal))) if cal >= 0 else float(math.exp(cal) / (1.0 + math.exp(cal)))
         pred_int = int(p >= self.threshold)
 
         # Per-backbone share of the LR logit: dot product of each backbone's

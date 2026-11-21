@@ -16,6 +16,11 @@ with patch('app.services.model_registry.ModelRegistry.load_from_fusion_repo', ne
     from app.main import app
 
 
+def _png(w, h, color=(120, 80, 40)):
+    from PIL import Image
+    b = io.BytesIO(); Image.new("RGB", (w, h), color).save(b, format="PNG"); return b.getvalue()
+
+
 @pytest.fixture
 def client():
     """Create a test client."""
@@ -83,12 +88,7 @@ class TestPredictEndpoint:
     def test_predict_accepts_file_upload(self, client):
         """Test that /predict accepts multipart file upload format."""
         # Create a minimal valid PNG image (1x1 pixel)
-        png_bytes = (
-            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
-            b'\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
-            b'\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00'
-            b'\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82'
-        )
+        png_bytes = _png(128, 128)
         
         # This will fail if models aren't loaded, but we're testing the route structure
         files = {"image": ("test.png", io.BytesIO(png_bytes), "image/png")}
@@ -104,12 +104,7 @@ class TestQueryParameters:
     
     def test_predict_with_use_fusion_param(self, client):
         """Test that use_fusion query param is accepted."""
-        png_bytes = (
-            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
-            b'\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
-            b'\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00'
-            b'\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82'
-        )
+        png_bytes = _png(128, 128)
         files = {"image": ("test.png", io.BytesIO(png_bytes), "image/png")}
         
         # Both true and false should be valid
@@ -122,12 +117,7 @@ class TestQueryParameters:
     
     def test_predict_with_model_param(self, client):
         """Test that model query param is accepted."""
-        png_bytes = (
-            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
-            b'\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
-            b'\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00'
-            b'\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82'
-        )
+        png_bytes = _png(128, 128)
         files = {"image": ("test.png", io.BytesIO(png_bytes), "image/png")}
         
         response = client.post(
@@ -139,3 +129,44 @@ class TestQueryParameters:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestUploadValidation:
+    """Audit 11: invalid uploads get clean 4xx errors, never 500s or meaningless verdicts."""
+
+    def post(self, client, data, name="x.png", mime="image/png"):
+        return client.post("/predict", files={"image": (name, io.BytesIO(data), mime)})
+
+    def test_tiny_image_rejected(self, client):
+        r = self.post(client, _png(32, 24))
+        assert r.status_code == 400 and "too small" in r.text
+
+    def test_truncated_image_rejected(self, client):
+        b = _png(256, 256)
+        from PIL import Image
+        jb = io.BytesIO(); Image.new("RGB", (512, 512), (10, 200, 30)).save(jb, format="JPEG", quality=90)
+        r = self.post(client, jb.getvalue()[: len(jb.getvalue()) // 3], "x.jpg", "image/jpeg")
+        assert r.status_code == 400 and ("corrupt" in r.text or "truncated" in r.text or "Could not read" in r.text)
+
+    def test_pixel_bomb_rejected_with_413(self, client, monkeypatch):
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "MAX_IMAGE_PIXELS", 100 * 100)
+        r = self.post(client, _png(200, 200))
+        assert r.status_code == 413 and "too large" in r.text
+
+
+class TestExplainModelErrors:
+    def test_llm_quota_maps_to_503(self, client, monkeypatch):
+        import app.api.routes_predict as rp
+        from app.core.errors import LLMUnavailableError
+
+        class FakeLLM:
+            enabled = True
+
+            def generate_single_model_explanation(self, **kw):
+                raise LLMUnavailableError(message="402 RESOURCE_EXHAUSTED prepayment credits depleted")
+
+        monkeypatch.setattr(rp, "get_llm_service", lambda: FakeLLM())
+        r = client.post("/explain-model", data={"model_name": "clip-b16", "prob_fake": "0.7"},
+                        files={"image": ("x.png", io.BytesIO(_png(128, 128)), "image/png")})
+        assert r.status_code == 503 and "temporarily unavailable" in r.text

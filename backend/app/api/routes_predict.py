@@ -10,6 +10,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from app.core.errors import (
     DeepFakeDetectorError,
     ImageProcessingError,
+    ImageTooLargeError,
+    LLMUnavailableError,
     InferenceError,
     FusionError,
     ModelNotFoundError,
@@ -48,12 +50,12 @@ def _legacy_verdict(pred: str) -> str:
     return "ai" if pred == "fake" else "real"
 
 
-def _run_probe(image_bytes: bytes, explain: bool, return_submodels: bool, timer: Timer) -> PredictResponse:
+def _run_probe(image_bytes: bytes, explain: bool, return_submodels: bool, timer: Timer, route: str = "/predict") -> PredictResponse:
     """Run the foundation probe and build the response (timer already started)."""
     probe = get_model_registry().get_probe()
     with timer.measure("inference"):
         result = get_inference_service().predict_single(
-            model_key=probe.name, image_bytes=image_bytes, explain=explain
+            model_key=probe.name, image_bytes=image_bytes, explain=explain, route=route
         )
     timer.stop_total()
     return _probe_response(result, timer, return_submodels)
@@ -282,6 +284,8 @@ async def predict(
                 model_version=_legacy_model_version(registry),
             )
     
+    except ImageTooLargeError as e:
+        raise HTTPException(status_code=413, detail={"error": "ImageTooLarge", "message": e.message, "details": e.details})
     except ImageProcessingError as e:
         logger.warning(f"Image processing error: {e.message}")
         raise HTTPException(
@@ -344,9 +348,11 @@ async def explain_probe(
             image_bytes = await image.read()
         with timer.measure("preprocess"):
             get_preprocess_service().validate_image(image_bytes)
-        return _run_probe(image_bytes, explain=True, return_submodels=return_submodels, timer=timer)
+        return _run_probe(image_bytes, explain=True, return_submodels=return_submodels, timer=timer, route="/explain")
     except HTTPException:
         raise
+    except ImageTooLargeError as e:
+        raise HTTPException(status_code=413, detail={"error": "ImageTooLarge", "message": e.message})
     except ImageProcessingError as e:
         raise HTTPException(status_code=400, detail={"error": "ImageProcessingError", "message": e.message})
     except ModelNotLoadedError as e:
@@ -403,6 +409,7 @@ async def explain_model(
                 status_code=500,
                 detail="Failed to generate explanation from LLM"
             )
+
         
         return ExplainModelResponse(
             model_name=model_name,
@@ -416,6 +423,12 @@ async def explain_model(
         
     except HTTPException:
         raise
+    except LLMUnavailableError as e:
+        raise HTTPException(status_code=503, detail={
+            "error": "LLMUnavailable",
+            "message": "AI insights are temporarily unavailable. The prediction and heatmaps above are unaffected.",
+            "reason": e.message,
+        })
     except Exception as e:
         logger.exception(f"Error generating model explanation: {e}")
         raise HTTPException(
